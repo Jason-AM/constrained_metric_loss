@@ -9,6 +9,7 @@ eggs/
 .installed.cfg
 *.egg
 MANIFEST
+*__pycache__
 
 # notebooks
 .ipynb_checkpoints
