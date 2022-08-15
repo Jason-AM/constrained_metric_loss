@@ -9,6 +9,7 @@ eggs/
 .installed.cfg
 *.egg
 MANIFEST
+.DS_Store
 
 # notebooks
 .ipynb_checkpoints
