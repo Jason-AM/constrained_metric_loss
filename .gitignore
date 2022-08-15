@@ -9,6 +9,7 @@ eggs/
 .installed.cfg
 *.egg
 MANIFEST
+*__pycache__
 .DS_Store
 
 # notebooks
