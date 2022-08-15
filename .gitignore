@@ -13,6 +13,8 @@ MANIFEST
 
 # notebooks
 .ipynb_checkpoints
+notebooks/*.ipynb
 
 # data
 data/*.csv
+
