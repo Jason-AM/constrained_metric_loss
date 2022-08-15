@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.14.1
+#       jupytext_version: 1.13.8
 #   kernelspec:
 #     display_name: Python [conda env:min_prec]
 #     language: python
@@ -266,7 +266,7 @@ class LogRegMaxRecall2(nn.Module):
             loss = self(x, y)
             loss.backward()
             optimizer.step()
-        
+
 
 # #### set up model performance functions
 
@@ -340,7 +340,7 @@ def run_max_recall_model(x, y, xtest, ytest, min_prec=0.8, lam=1e4, thresh = 0.5
             loss.append([model_maxrecall(x, y), model_maxrecall(xtest, ytest)])
         
     return model_stats, roc_curve_vals, loss
-    
+
 
 # +
 # def run_max_recall_model(x, y, xtest, ytest, min_prec=0.8, lam=1e4, thresh = 0.5):
@@ -518,7 +518,6 @@ ytest_toy = y_toy[idx[300:]]
 bce_prec, bce_recall, bce_model = run_bce_model(xtrain_toy, ytrain_toy, xtest_toy, ytest_toy)
 bce_prec, bce_recall
 
-# +
 for prec in np.arange(0.7,0.9,0.05):
     outputs = run_max_recall_model(
         xtrain_toy, ytrain_toy, xtest_toy, ytest_toy, min_prec=prec, lam=1e5, thresh = 0.5, num_random_initial_params=10
@@ -532,7 +531,7 @@ for prec in np.arange(0.7,0.9,0.05):
     plt.legend()
     plt.show()
     
-    
+
 
 # + tags=[]
 for prec in np.arange(0.7,0.9,0.05):
@@ -572,25 +571,20 @@ x_test_scaled = scaler.transform(X_test)
 bce_prec, bce_recall, bce_model = run_bce_model(x_train_scaled, y_train, x_test_scaled, y_test)
 bce_prec, bce_recall
 
-# +
 for prec in np.arange(0.7,0.9,0.05):
     outputs = run_max_recall_model(
         xtrain_toy, ytrain_toy, xtest_toy, ytest_toy, min_prec=prec, lam=1e4, thresh = 0.5, num_random_initial_params=100
     )
     print(prec)
     print(outputs)
-    
     
 
-# +
+
 for prec in np.arange(0.7,0.9,0.05):
     outputs = run_max_recall_model(
         xtrain_toy, ytrain_toy, xtest_toy, ytest_toy, min_prec=prec, lam=1e4, thresh = 0.5, num_random_initial_params=100
     )
     print(prec)
     print(outputs)
-    
-    
-# -
 
 
