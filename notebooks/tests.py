@@ -476,6 +476,34 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
 
 
 maxrecall_prec, maxrecall_recall
+
+# +
+from scipy.special import expit
+
+def general_sigmoiod(x, gamma, delta, m, b):
+    return (1 + gamma * delta) * expit(m * x + b)
+
+def func(to_minimise, fixed):
+    m, b = to_minimise
+    gamma, delta, eps = fixed
+    return np.square(1 + delta - general_sigmoiod(eps, gamma, delta, m, b)) + np.square(delta - general_sigmoiod(0, gamma, delta, m, b))
+
+
+# +
+# %%time
+
+from scipy.optimize import minimize
+
+
+minimize(func , x0 = (1, 1), args = ([6 , 0.035 ,0.75]), method='BFGS')
+
+# +
+# %%time
+
+from constrained_metric_loss.min_precision_loss import get_sigmoid_params
+
+get_sigmoid_params(6, 0.035, 0.75, 'lower', epochs=1000)
+
 # -
 
 

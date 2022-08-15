@@ -42,7 +42,7 @@ init_notebook_mode()
 # Data set from paper found at https://github.com/tufts-ml/false-alarm-control/blob/main/toy_example_comparing_BCE_Hinge_and_Sigmoid.ipynb
 
 # +
-from false_alarm_control import toydata
+from data import toydata
 
 x_toy, y_toy, _, _, _, _ = toydata.create_toy_dataset()
 
@@ -156,7 +156,7 @@ def get_loss_from_new_form(beta, min_prec=0.9):
     f_hat_log = torch.log((1 + gamma * delta)/(1 + torch.exp(mhat * f + bhat)))
 
     return -torch.sum(-(lmbda + 1 )*y*f_tilde_log + (lmbda*min_prec/(1-min_prec))*(1-y)*f_hat_log +  lmbda*gamma * delta * y).numpy()
-    
+
 
 
 
