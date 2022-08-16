@@ -10,9 +10,11 @@ eggs/
 *.egg
 MANIFEST
 *__pycache__
+.DS_Store
 
 # notebooks
 .ipynb_checkpoints
+notebooks/*.ipynb
 
 # data
 data/*.csv
