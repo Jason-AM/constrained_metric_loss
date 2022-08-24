@@ -36,14 +36,13 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 
-from constrained_metric_loss.min_precision_loss import MinPrecLoss, LearnableMinPrecLoss
+from constrained_metric_loss.min_precision_loss import MinPrecLoss, LearnableMinPrecLoss, MinPrecLossLogForm
 
 
 # -
 
 # # model
 
-# +
 class LogReg(nn.Module):
     """Normal logistic regression with BCE loss"""
     def __init__(self, nfeat, model_param_init, loss, loss_arguments, trainable_loss_arguments=None):
@@ -91,16 +90,14 @@ class LogReg(nn.Module):
         f = xtest @ self.beta
         return torch.sigmoid(f).detach().numpy().flatten()
     
-    def fit(self, x, y, optimizer, n_batches=10_000, clipping=True):
+    def fit(self, x, y, optimizer, n_batches=10_000):
         
         for i in range(n_batches):
             optimizer.zero_grad()
             loss = self.forward(x, y)
             loss.backward()
             optimizer.step()
-                
-            
-# -
+
 
 # #### set up model performance functions
 
@@ -118,6 +115,7 @@ def run_model(x, y, xtest, ytest, thresh, model_param_init, loss, loss_params, t
     
 
     phat = model.predict_proba(xtest)
+
     yhat = (phat >= thresh).astype(int)
     
     prec = precision_score(ytest, yhat)
@@ -249,6 +247,32 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
 
 
 maxrecall_prec, maxrecall_recall, list(maxrecall_model.parameters())
+
+# +
+sklearnlogreg = LogisticRegression()
+sklearnlogreg = sklearnlogreg.fit(x_basic, y_basic)
+param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+
+maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
+    x_basic, 
+    y_basic, 
+    xtest_basic, 
+    ytest_basic, 
+    0.5, 
+    param_init,
+    loss = MinPrecLossLogForm, 
+    loss_params = {
+        'min_prec':0.8, 
+        'lmbda': 1e9, 
+        'sigmoid_hyperparams': {'gamma': 1, 'delta':0, 'eps': 0.75},
+        'sigmoid_params': {'mtilde': 1,'btilde': 0, 'mhat': 1, 'bhat': 0}
+    }
+)
+
+
+maxrecall_prec, maxrecall_recall
+
+
 # -
 
 # ### 1D dataset
@@ -515,9 +539,60 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
 
 
 maxrecall_prec, maxrecall_recall, list(maxrecall_model.parameters())
+
+# + tags=[]
+sklearnlogreg = LogisticRegression()
+sklearnlogreg = sklearnlogreg.fit(xtrain_toy, ytrain_toy)
+param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+
+maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
+    xtrain_toy,
+    ytrain_toy,
+    xtest_toy,
+    ytest_toy,  
+    0.5, 
+    param_init,
+    loss = MinPrecLossLogForm, 
+    loss_params = {
+        'min_prec':0.8, 
+        'lmbda': 1e4, 
+        'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75},
+        # 'sigmoid_params': {'mtilde': 1,'btilde': 0, 'mhat': 1, 'bhat': 0}
+    }
+)
+
+
+maxrecall_prec, maxrecall_recall
+
+
+# +
+list(maxrecall_model.parameters())
+
+betas = [i[1].data.numpy() for i in maxrecall_model.named_parameters() if i[1].requires_grad]
+betas = betas[0]
+
+p_thresh = 0.5
+
+x1 = np.linspace(np.min(xtest_toy), np.max(xtest_toy), 1000)
+x2 = (-np.log(1/p_thresh - 1) -betas[0]*x1 - betas[2])/betas[1]
+
+cdict = {0: 'green', 1: 'blue'}
+mdict = {0:'o', 1:'x'}
+
+fig, ax = plt.subplots()
+for g in np.unique(ytest_toy):
+    ix = np.where(ytest_toy == g)
+    ax.scatter(xtest_toy[ix,0], xtest_toy[ix,1], c = cdict[g], marker=mdict[g], label = g, alpha=0.3)
+ax.legend()
+ax.plot(x1, x2)
+ax.set_ylim(-3,3)
+plt.show()
+
 # -
 
 # ### diabites data
+
+
 
 # +
 from sklearn.preprocessing import StandardScaler

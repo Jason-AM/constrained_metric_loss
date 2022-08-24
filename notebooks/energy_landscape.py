@@ -13,6 +13,9 @@
 #     name: conda-env-min_prec-py
 # ---
 
+# %load_ext autoreload
+# %autoreload 2
+
 # +
 import numpy as np
 import os
@@ -37,7 +40,8 @@ init_notebook_mode()
 
 # -
 
-from constrained_metric_loss.min_precision_loss import MinPrecLoss
+from constrained_metric_loss.min_precision_loss import MinPrecLoss, MinPrecLossLogForm
+from constrained_metric_loss.bce_type_loss import BCELogitManual
 
 # # data
 
@@ -58,6 +62,24 @@ y = torch.from_numpy(y_toy).float()
 
 # x = torch.from_numpy(x_moons).float()
 # y = torch.from_numpy(y_moons).float()
+
+# +
+# n = 10000
+
+# rng = np.random.default_rng(5)
+
+# x1 = rng.normal(0, 1, size=n)
+# x2 = rng.normal(3, 2.2, size=n)
+
+
+# beta0_true = -0.4
+# beta1_true = -5.3
+# beta2_true = 3.1
+
+# p = 1/(1+np.exp(-(beta0_true + beta1_true*x1 + beta2_true*x2)))
+
+# y = torch.from_numpy(rng.binomial(1, p, size=n)).float()
+# x = torch.from_numpy(np.column_stack((x1, x2))).float()
 # -
 
 # #### params from sklearn
@@ -74,14 +96,27 @@ sklearnbetas
 
 # # Losses
 
-def get_loss_for_bce(beta):
+def loss_for_bce(beta):
     torch_beta = torch.from_numpy(beta).float()
     model_func = lambda xx:  xx @ torch_beta
 
     x_w_dummy_for_int = np.column_stack((x, np.ones([x.shape[0]])))
     x_w_dummy_for_int = torch.from_numpy(x_w_dummy_for_int).float()
 
-    loss_funct = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(0.01))
+    loss_funct = nn.BCEWithLogitsLoss(reduction='sum')
+
+    return loss_funct(model_func(x_w_dummy_for_int), y).numpy()
+
+
+
+def loss_for_bce_manual(beta):
+    torch_beta = torch.from_numpy(beta).float()
+    model_func = lambda xx:  xx @ torch_beta
+
+    x_w_dummy_for_int = np.column_stack((x, np.ones([x.shape[0]])))
+    x_w_dummy_for_int = torch.from_numpy(x_w_dummy_for_int).float()
+
+    loss_funct = BCELogitManual()
 
     return loss_funct(model_func(x_w_dummy_for_int), y).numpy()
 
@@ -103,8 +138,25 @@ def loss_from_script(beta, min_prec=0.9, lmbda=100):
     )
     
     return loss.forward(f, y).numpy()
-    
 
+
+def logloss(beta, min_prec=0.9, lmbda=100):
+    torch_beta = torch.from_numpy(beta).float()
+    model_func = lambda x:  x @ torch_beta
+
+    x_w_dummy_for_int = np.column_stack((x, np.ones([x.shape[0]])))
+    x_w_dummy_for_int = torch.from_numpy(x_w_dummy_for_int).float()
+    
+    f = model_func(x_w_dummy_for_int)
+    
+    loss = MinPrecLossLogForm(
+        min_prec = min_prec,
+        lmbda = lmbda,
+        sigmoid_hyperparams = {"gamma": 7, "delta": 0.035},
+        sigmoid_params = {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
+    )
+    
+    return loss.forward(f, y).numpy()
 
 # +
 # def get_loss_from_new_form(beta, min_prec=0.9, lmbda= 1e-3):
@@ -161,6 +213,14 @@ def get_loss_landscape(loss_function, num_samples, w0_width, w1_width, kwargs={}
     return go.Figure(data=data, layout=layout)
 
 
-iplot(get_loss_landscape(loss_from_script, 40, 4, 4, {'min_prec': 0.9, 'lmbda': 1e-3}))
+iplot(get_loss_landscape(loss_from_script, 80, 20, 5, {'min_prec': 0.9, 'lmbda': 1e4}))
+
+iplot(get_loss_landscape(logloss, 80, 20, 5, {'min_prec': 0.9, 'lmbda': 1e4}))
+
+# # BCE tests
+
+get_loss_landscape(loss_for_bce, 80, 10, 10, )
+
+get_loss_landscape(loss_for_bce_manual, 80, 10, 10, )
 
 

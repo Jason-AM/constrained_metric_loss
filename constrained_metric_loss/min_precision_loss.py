@@ -118,3 +118,85 @@ class LearnableMinPrecLoss(nn.Module):
         # https://discuss.pytorch.org/t/multiplication-of-activation-function-with-learnable-parameter-scalar/113746/2
 
         return loss
+
+
+class MinPrecLossLogForm(nn.Module):
+    def __init__(
+        self,
+        min_prec: float,
+        lmbda: float,
+        sigmoid_hyperparams: Dict,
+        sigmoid_params: Optional[Dict] = None,
+    ):
+        super().__init__()
+        self.min_prec = min_prec
+        self.lmbda = lmbda
+
+        self.extract_sigmoid_hyperparameters(sigmoid_hyperparams)
+        self.extract_or_calculate_sigmoid_params(sigmoid_params)
+
+    def extract_sigmoid_hyperparameters(self, sigmoid_hyperparams: Dict):
+        self.gamma = sigmoid_hyperparams["gamma"]
+        self.delta = sigmoid_hyperparams["delta"]
+        self.eps = sigmoid_hyperparams.get("eps", None)
+
+    def extract_or_calculate_sigmoid_params(self, sigmoid_params: Optional[Dict]):
+
+        if sigmoid_params is None:
+            self.mtilde, self.btilde = get_sigmoid_params_bfgs(self.gamma, self.delta, self.eps, "lower")
+            self.mhat, self.bhat = get_sigmoid_params_bfgs(self.gamma, self.delta, self.eps, "upper")
+        else:
+            self.mtilde = sigmoid_params["mtilde"]
+            self.btilde = sigmoid_params["btilde"]
+            self.mhat = sigmoid_params["mhat"]
+            self.bhat = sigmoid_params["bhat"]
+
+    def forward(self, f, y):
+        def _logsumexp(m, b, f):
+            return torch.logsumexp(torch.column_stack((torch.zeros(len(f), 1), (-m * f - b).reshape(-1, 1))), 1)
+
+        tpc = torch.sum(
+            torch.where(
+                y == 1.0,
+                (torch.log(torch.tensor(1 + self.gamma * self.delta)) - _logsumexp(self.mtilde, self.btilde, f)),
+                torch.tensor(0.0),
+            )
+        )
+
+        fpc = torch.sum(
+            torch.where(
+                y == 0.0,
+                (torch.log(torch.tensor(1 + self.gamma * self.delta)) - _logsumexp(self.mhat, self.bhat, f)),
+                torch.tensor(0.0),
+            )
+        )
+
+        # tpc = torch.sum(
+        #     torch.where(
+        #         y == 1.0,
+        #         torch.log((1 + self.gamma * self.delta) * torch.sigmoid(self.mtilde * f + self.btilde) + 1),
+        #         torch.tensor(0.0),
+        #     )
+        # )
+
+        # # Eqn 10
+        # fpc = torch.sum(
+        #     torch.where(
+        #         y == 0.0,
+        #         torch.log((1 + self.gamma * self.delta) * torch.sigmoid(self.mhat * f + self.bhat) + 1e-1),
+        #         torch.tensor(0.0),
+        #     )
+        # )
+
+        # Line below eqn. 1 in paper
+        Nplus = torch.sum(y)
+
+        # Eqn. 12
+        g = -tpc + self.min_prec / (1.0 - self.min_prec) * fpc + self.gamma * self.delta * Nplus
+
+        # Eqn. 12
+        loss = -tpc + self.lmbda * nn.ReLU()(g)  # g
+        # The reason for the odd way of calling the ReLU function:
+        # https://discuss.pytorch.org/t/multiplication-of-activation-function-with-learnable-parameter-scalar/113746/2
+
+        return loss
