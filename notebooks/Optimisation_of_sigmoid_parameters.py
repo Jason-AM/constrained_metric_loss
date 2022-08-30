@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.14.1
+#       jupytext_version: 1.13.8
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -64,8 +64,7 @@ class tight_sigmoid(nn.Module):
         def u(a):
             return (1+self.gamma*self.delta)*torch.sigmoid(self.m*a + self.b)
         
-        # obj = torch.sum(torch.square(self.delta - u(-self.eps)) + torch.square(1 + self.delta - u(0)))
-        obj = torch.sum(torch.square(1 + self.delta - u(self.eps)) + torch.square(self.delta - u(0)))
+        obj = torch.sum(torch.square(self.delta - u(-self.eps)) + torch.square(1 + self.delta - u(0)))
         return obj
 
 

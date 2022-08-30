@@ -36,16 +36,17 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 
-from constrained_metric_loss.min_precision_loss import MinPrecLoss
+from constrained_metric_loss.min_precision_loss import MinPrecLoss, LearnableMinPrecLoss
 
 
 # -
 
 # # model
 
+# +
 class LogReg(nn.Module):
     """Normal logistic regression with BCE loss"""
-    def __init__(self, nfeat, model_param_init, loss, loss_arguments, trainable_loss_arguments=False):
+    def __init__(self, nfeat, model_param_init, loss, loss_arguments, trainable_loss_arguments=None):
         super().__init__()
         
         self.nfeat = nfeat
@@ -56,8 +57,7 @@ class LogReg(nn.Module):
         self.loss_arguments = loss_arguments
         self.trainable_loss_arguments = trainable_loss_arguments
         
-        if not self.trainable_loss_arguments:
-            self.loss_func = self.loss(**self.loss_arguments)
+        self.loss_func = self.loss(**self.loss_arguments)
 
             
         
@@ -70,7 +70,13 @@ class LogReg(nn.Module):
         self.f = x @ self.beta
         
         if self.trainable_loss_arguments:
-            self.loss_func = self.loss(**self.loss_arguments)
+            for i, p in enumerate(list(self.parameters())[1:]):
+                p.data.clamp_(
+                    self.trainable_loss_arguments[i][0], self.trainable_loss_arguments[i][1]
+                )
+                
+                
+                
         
         return self.loss_func(self.f, y.float())
     
@@ -85,19 +91,27 @@ class LogReg(nn.Module):
         f = xtest @ self.beta
         return torch.sigmoid(f).detach().numpy().flatten()
     
-    def fit(self, x, y, optimizer, n_batches=10_000):
+    def fit(self, x, y, optimizer, n_batches=10_000, clipping=True):
         
         for i in range(n_batches):
             optimizer.zero_grad()
             loss = self.forward(x, y)
             loss.backward()
             optimizer.step()
-
+                
+            
+# -
 
 # #### set up model performance functions
 
-def run_model(x, y, xtest, ytest, thresh, model_param_init, loss, loss_params):
-    model = LogReg(nfeat=x.shape[1], model_param_init=model_param_init, loss=loss, loss_arguments=loss_params)
+def run_model(x, y, xtest, ytest, thresh, model_param_init, loss, loss_params, trainable_loss_arguments=None):
+    model = LogReg(
+        nfeat=x.shape[1], 
+        model_param_init=model_param_init, 
+        loss=loss, 
+        loss_arguments=loss_params,
+        trainable_loss_arguments=trainable_loss_arguments,
+    )
     optimizer = optim.Adam(model.parameters(), lr=0.1)
     model.fit(x, y, optimizer)
     
@@ -175,13 +189,12 @@ bce_prec, bce_recall, bce_model = run_model(
     0.5, 
     param_init, 
     loss = nn.BCEWithLogitsLoss, 
-    loss_params = {"pos_weight": 3 * torch.ones(len(y_basic))}
+    loss_params = {"pos_weight": 0.3 * torch.ones(len(y_basic))}
 )
 
 bce_prec, bce_recall
 
-# + tags=[]
-
+# +
 sklearnlogreg = LogisticRegression()
 sklearnlogreg = sklearnlogreg.fit(x_basic, y_basic)
 param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
@@ -196,7 +209,7 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
     loss = MinPrecLoss, 
     loss_params = {
         'min_prec':0.8, 
-        'lmbda': 1e4, 
+        'lmbda': 1e9, 
         'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75},
         # 'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
     }
@@ -204,6 +217,38 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
 
 
 maxrecall_prec, maxrecall_recall
+
+# +
+
+sklearnlogreg = LogisticRegression()
+sklearnlogreg = sklearnlogreg.fit(x_basic, y_basic)
+param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+
+maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
+    x_basic, 
+    y_basic, 
+    xtest_basic, 
+    ytest_basic, 
+    0.5, 
+    param_init,
+    loss = LearnableMinPrecLoss, 
+    loss_params = {
+        'min_prec':0.8, 
+        'lmbda': 1e9, 
+        'lmbda2': 1e9, 
+        'sigmoid_hyperparams': {
+            'sigmoid_scale': nn.Parameter(torch.tensor(0.2)), 
+            'mtilde': nn.Parameter(torch.tensor(6.8)), 
+            'btilde': nn.Parameter(torch.tensor(-3.5)),
+            'mhat': nn.Parameter(torch.tensor(6.8)),
+            'bhat': nn.Parameter(torch.tensor(1.5))
+        }
+    },
+    trainable_loss_arguments = [(0,10), (1, 50), (-10,-1), (1,50), (1, 10)]
+)
+
+
+maxrecall_prec, maxrecall_recall, list(maxrecall_model.parameters())
 # -
 
 # ### 1D dataset
@@ -332,6 +377,37 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
 
 
 maxrecall_prec, maxrecall_recall
+
+# +
+sklearnlogreg = LogisticRegression()
+sklearnlogreg = sklearnlogreg.fit(xmoons_train, ymoons_train)
+param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+
+maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
+    xmoons_train,
+    ymoons_train,
+    xmoons_test,
+    ymoons_test, 
+    0.5, 
+    param_init,
+    loss = LearnableMinPrecLoss, 
+    loss_params = {
+        'min_prec':0.8, 
+        'lmbda': 1e8, 
+        'lmbda2': 1e8, 
+        'sigmoid_hyperparams': {
+            'sigmoid_scale': nn.Parameter(torch.tensor(0.2)), 
+            'mtilde': nn.Parameter(torch.tensor(6.8)), 
+            'btilde': nn.Parameter(torch.tensor(-3.5)),
+            'mhat': nn.Parameter(torch.tensor(6.8)),
+            'bhat': nn.Parameter(torch.tensor(1.5))
+        },
+    },
+    trainable_loss_arguments = [(0,10), (1, 50), (-10,-1), (1,50), (1, 10)]
+)
+
+
+maxrecall_prec, maxrecall_recall, list(maxrecall_model.parameters())
 # -
 
 # ### dtatset from papaer
@@ -408,9 +484,38 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
 
 
 maxrecall_prec, maxrecall_recall
+
+# +
+sklearnlogreg = LogisticRegression()
+sklearnlogreg = sklearnlogreg.fit(xtrain_toy, ytrain_toy)
+param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+
+maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
+    xtrain_toy,
+    ytrain_toy,
+    xtest_toy,
+    ytest_toy, 
+    0.5, 
+    param_init,
+    loss = LearnableMinPrecLoss, 
+    loss_params = {
+        'min_prec':0.8, 
+        'lmbda': 1e8, 
+        'lmbda2': 1e8, 
+        'sigmoid_hyperparams': {
+            'sigmoid_scale': nn.Parameter(torch.tensor(0.2)), 
+            'mtilde': nn.Parameter(torch.tensor(6.8)), 
+            'btilde': nn.Parameter(torch.tensor(-3.5)),
+            'mhat': nn.Parameter(torch.tensor(6.8)),
+            'bhat': nn.Parameter(torch.tensor(1.5))
+        },
+    },
+    trainable_loss_arguments = [(-1,10), (0, 50), (-10,10), (0,50), (-10, 10)]
+)
+
+
+maxrecall_prec, maxrecall_recall, list(maxrecall_model.parameters())
 # -
-
-
 
 # ### diabites data
 
@@ -477,5 +582,9 @@ maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
 
 maxrecall_prec, maxrecall_recall
 # -
+
+
+
+
 
 
