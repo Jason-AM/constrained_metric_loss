@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.8
+#       jupytext_version: 1.14.1
 #   kernelspec:
 #     display_name: Python [conda env:min_prec]
 #     language: python
@@ -530,7 +530,7 @@ for prec in np.arange(0.7,0.9,0.05):
         plt.plot(curve_vals[0], curve_vals[1], label=f"{i} - {loss[i]}")
     plt.legend()
     plt.show()
-    
+
 
 
 # + tags=[]
@@ -577,7 +577,7 @@ for prec in np.arange(0.7,0.9,0.05):
     )
     print(prec)
     print(outputs)
-    
+
 
 
 for prec in np.arange(0.7,0.9,0.05):

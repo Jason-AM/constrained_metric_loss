@@ -103,7 +103,7 @@ def loss_from_script(beta, min_prec=0.9, lmbda=100):
     )
     
     return loss.forward(f, y).numpy()
-    
+
 
 
 # +

@@ -43,7 +43,6 @@ from constrained_metric_loss.min_precision_loss import MinPrecLoss, LearnableMin
 
 # # model
 
-# +
 class LogReg(nn.Module):
     """Normal logistic regression with BCE loss"""
     def __init__(self, nfeat, model_param_init, loss, loss_arguments, trainable_loss_arguments=None):
@@ -98,9 +97,7 @@ class LogReg(nn.Module):
             loss = self.forward(x, y)
             loss.backward()
             optimizer.step()
-                
-            
-# -
+
 
 # #### set up model performance functions
 
