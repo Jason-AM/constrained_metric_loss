@@ -202,7 +202,7 @@ def get_loss_landscape(loss_function, num_samples, w0_width, w1_width, kwargs={}
     
     data = [
         go.Surface(z=losses.reshape(xv.shape), x=xv, y=yv),
-        go.Scatter3d(x = [sklearnbetas[0]], y = [sklearnbetas[1]], z = [loss_function(sklearnbetas, **kwargs)], mode='markers',marker=dict(size=12, color='black'))
+        go.Scatter3d(x = [sklearnbetas[0]], y = [sklearnbetas[1]], z = [loss_function(sklearnbetas, **kwargs)], mode='markers',marker=dict(size=6, color='black'))
     ]
 
     layout = go.Layout(
@@ -219,8 +219,50 @@ iplot(get_loss_landscape(logloss, 80, 20, 5, {'min_prec': 0.9, 'lmbda': 1e4}))
 
 # # BCE tests
 
-get_loss_landscape(loss_for_bce, 80, 10, 10, )
+get_loss_landscape(loss_for_bce, 80, 2, 2, )
 
-get_loss_landscape(loss_for_bce_manual, 80, 10, 10, )
+get_loss_landscape(loss_for_bce_manual, 250, 5, 5, )
+
+
+
+
+
+# # losses
+
+# +
+x = np.linspace(-10, 10, 1000)
+
+zero_one = 1 - np.heaviside(x, 0)
+
+sigmoid = lambda xx: 1/(1+np.exp(-xx))
+
+sig_loss = 1 - sigmoid(x)
+
+logloss = - np.log(sigmoid(x))
+logloss_base_n = - np.log(sigmoid(x-10)) / np.log(10000)
+
+# piecewise_relu = np.minimum(-0.001*x+1, np.maximum(0, 1-x))
+neg_leaky_relu = np.where(x > 0, 1-x, 1 - x * 0.01)
+relu_of_leaky_relu = np.maximum(neg_leaky_relu, 0)
+
+
+
+plt.plot(x, zero_one, label='0-1')
+# plt.plot(x, sig_loss, label='sig_loss')
+# plt.plot(x, logloss, label='logloss')
+# plt.plot(x, logloss_base_n, label='logloss_base_n')
+plt.plot(x, relu_of_leaky_relu, label='relu_of_leaky_relu')
+plt.ylim(-1, 3)
+plt.legend()
+
+# +
+plt.plot(x, zero_one, label='0-1')
+
+torch_x = torch.linspace(-10, 10, 100)
+torch_relu_leaky_relu = nn.ReLU()(1 - nn.LeakyReLU(negative_slope=0.01)(torch_x))
+
+
+plt.plot(torch_x.numpy(), torch_relu_leaky_relu.numpy())
+# -
 
 
