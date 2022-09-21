@@ -16,13 +16,6 @@
 # %load_ext autoreload
 # %autoreload 2
 
-# https://www.cl.cam.ac.uk/teaching/2021/LE49/probnn/3-3.pdf
-
-# +
-#import os
-
-#os.environ['KMP_DUPLICATE_LIB_OK']='True'
-
 # +
 import matplotlib.pyplot as plt
 import numpy as np
@@ -37,6 +30,32 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from constrained_metric_loss.min_precision_loss import MinPrecLoss
+
+# +
+#Choose MLP with BCE loss or with MinPrec loss
+
+modelchosen = 'mlp' #'mlp' #'linear'
+losschosen = 'minprec' #'bce' #'minprec'
+
+# +
+gamma = 7 #7
+delta = 0.035 #0.035
+eps = 0.75 #0.75
+
+min_prec = 0.9
+
+lmbda = 1e4
+
+L2_coeff = 0.01
+lr = 0.1
+
+loss_params = {
+        'min_prec':min_prec, 
+        'lmbda': lmbda, 
+        'sigmoid_hyperparams': {'gamma': gamma, 'delta': delta, 'eps': eps}
+    }
+
+1+gamma*delta
 
 
 # -
@@ -85,7 +104,7 @@ class LinearScore(nn.Module):
         f = xtest @ self.beta
         return torch.sigmoid(f).detach().numpy().flatten()
     
-    def fit(self, x, y, optimizer, n_epochs=1000):
+    def fit(self, x, y, optimizer, n_epochs=10):
         
         for i in range(n_epochs):
             optimizer.zero_grad()
@@ -114,8 +133,8 @@ class MLP(nn.Module):
         self.layers = nn.Sequential(
           nn.Flatten(),
           nn.Linear(2, self.hidden_width),
-          nn.Sigmoid(),
           #nn.BatchNorm1d(num_features=self.hidden_width),
+          nn.Sigmoid(),
           #nn.ReLU(),
           nn.Linear(self.hidden_width, 1)
         )
@@ -147,7 +166,7 @@ class MLP(nn.Module):
         f = self.layers(xtest)
         return torch.sigmoid(f).detach().numpy().flatten()
     
-    def fit(self, x, y, optimizer, n_epochs=100):
+    def fit(self, x, y, optimizer, n_epochs=10):
         
         for i in range(n_epochs):
             optimizer.zero_grad()
@@ -156,25 +175,17 @@ class MLP(nn.Module):
             optimizer.step()
 
 
-# #### set up model performance functions
-
-def run_model(x, y, xtest, ytest, thresh, model_param_init, loss, loss_params):
-    model = LinearScore(nfeat=x.shape[1], model_param_init=model_param_init, loss=loss, loss_arguments=loss_params)
-    optimizer = optim.Adam(model.parameters(), lr=0.1)
-    model.fit(x, y, optimizer)
-    
-    
-
-    phat = model.predict_proba(xtest)
-    yhat = (phat >= thresh).astype(int)
-    
-    prec = precision_score(ytest, yhat)
-    rec = recall_score(ytest, yhat)
-
-    return prec, rec, model
+#https://discuss.pytorch.org/t/how-to-initialize-weights-in-nn-sequential-container/8534/2?u=ilanfri
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Linear') != -1:
+        torch.nn.init.normal_(m.weight, 0.0, 1.0)
+    elif classname.find('BatchNorm') != -1:
+        torch.nn.init.normal_(m.weight, 1.0, 0.02)
+        torch.nn.init.zeros_(m.bias)
 
 
-def decisionLine(model, testdata, thresh=0.5, eps=0.05, gridsize=100):
+def decisionLine(model, testdata, thresh=0.5, eps=0.05, gridsize=1000):
     
     """Takes a trained model with a predict_proba() method, and returns the coordinates
     for the decision boundary, where the boundary is set by points where the predicted
@@ -213,77 +224,6 @@ def decisionLine(model, testdata, thresh=0.5, eps=0.05, gridsize=100):
     return decision_line
 
 
-# # datasets
-
-# ### 1D dataset
-
-# +
-from sklearn.datasets import make_classification
-
-xsk, ysk = make_classification(
-    n_samples=10000, 
-    n_features=1, 
-    n_informative=1, 
-    n_redundant=0, 
-    n_classes=2, 
-    n_clusters_per_class=1, 
-    class_sep=2.,
-    random_state=6
-)
-
-# -
-
-plt.scatter(xsk, ysk)
-
-# +
-xsk_train = xsk[:9000]
-ysk_train = ysk[:9000]
-
-xsk_test = xsk[9000:]
-ysk_test = ysk[9000:]
-
-# +
-
-param_init = np.zeros(xsk_train.shape[1] + 1) # includes the intercept term
-
-bce_prec, bce_recall, bce_model = run_model(
-    xsk_train, 
-    ysk_train, 
-    xsk_test, 
-    ysk_test, 
-    0.5, 
-    param_init, 
-    loss = nn.BCEWithLogitsLoss, 
-    loss_params = {}
-)
-
-bce_prec, bce_recall
-
-# +
-sklearnlogreg = LogisticRegression()
-sklearnlogreg = sklearnlogreg.fit(xsk_train, ysk_train)
-param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
-
-maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
-    xsk_train, 
-    ysk_train, 
-    xsk_test, 
-    ysk_test, 
-    0.5, 
-    param_init,
-    loss = MinPrecLoss, 
-    loss_params = {
-        'min_prec':0.8, 
-        'lmbda': 1e4, 
-        'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75},
-        # 'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
-    }
-)
-
-
-maxrecall_prec, maxrecall_recall
-# -
-
 # ### Logistic regression dataset
 
 # +
@@ -303,9 +243,9 @@ p = 1/(1+np.exp(-(beta0_true + beta1_true*x1 + beta2_true*x2)))
 
 y_basic = rng.binomial(1, p, size=n)
 x_basic = np.column_stack((x1, x2))
-# -
 
-plt.scatter(x1, x2, c=p)
+# +
+#plt.scatter(x1, x2, c=p)
 
 # +
 ntest = int(np.floor(n/10))
@@ -319,106 +259,140 @@ xtest_basic = np.column_stack((x1test, x2test))
 
 ytest_basic = rng.binomial(1, ptest, size=ntest)
 
+# + slideshow={"slide_type": "slide"}
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+class tight_sigmoid_upper(nn.Module):
+    def __init__(self, eps, delta, gamma):
+        super().__init__()
+        
+        self.eps = eps
+        self.delta = delta
+        self.gamma = gamma
+        
+        self.m = nn.Parameter(torch.zeros(1))
+        self.b = nn.Parameter(torch.zeros(1))
+        
+    def forward(self):
+        
+        def u(a):
+            return (1+self.gamma*self.delta)*torch.sigmoid(self.m*a + self.b)
+        
+        obj = torch.sum(torch.square(self.delta - u(-self.eps)) + torch.square(1 + self.delta - u(0)))
+        return obj
+
+
+# + slideshow={"slide_type": "skip"}
+model_upper = tight_sigmoid_upper(eps, delta, gamma)
+
+optimizer_upper = optim.Adam(model_upper.parameters(), lr=1)
+
+for _ in range(1000):
+    optimizer_upper.zero_grad()
+    loss = model_upper()
+    loss.backward()
+    optimizer_upper.step()
+
+# + slideshow={"slide_type": "-"}
+m_upper, b_upper = model_upper.named_parameters()
+m_upper = float(m_upper[1].detach().numpy())
+b_upper = float(b_upper[1].detach().numpy())
+
+print((m_upper, b_upper))
+# + slideshow={"slide_type": "slide"}
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+class tight_sigmoid_lower(nn.Module):
+    def __init__(self, eps, delta, gamma):
+        super().__init__()
+        
+        self.eps = eps
+        self.delta = delta
+        self.gamma = gamma
+        
+        self.m = nn.Parameter(torch.zeros(1))
+        self.b = nn.Parameter(torch.zeros(1))
+        
+    def forward(self):
+        
+        def u(a):
+            return (1+self.gamma*self.delta)*torch.sigmoid(self.m*a + self.b)
+        
+        obj = torch.sum(torch.square(self.delta - u(0)) + torch.square(1 + self.delta - u(self.eps)))
+        return obj
+
+
+# + slideshow={"slide_type": "skip"}
+
+model_lower = tight_sigmoid_lower(eps, delta, gamma)
+
+optimizer_lower = optim.Adam(model_lower.parameters(), lr=1)
+
+for _ in range(1000):
+    optimizer_lower.zero_grad()
+    loss = model_lower()
+    loss.backward()
+    optimizer_lower.step()
+
+# + slideshow={"slide_type": "-"}
+m_lower, b_lower = model_lower.named_parameters()
+m_lower = float(m_lower[1].detach().numpy())
+b_lower = float(b_lower[1].detach().numpy())
+
+print((m_lower, b_lower))
 # +
-param_init = np.zeros(x_basic.shape[1] + 1) # includes the intercept term
+from scipy.special import expit
 
-bce_prec, bce_recall, bce_model = run_model(
-    x_basic, 
-    y_basic, 
-    xtest_basic, 
-    ytest_basic, 
-    0.5, 
-    param_init, 
-    loss = nn.BCEWithLogitsLoss, 
-    loss_params = {}
-)
-
-bce_prec, bce_recall
-
-# +
-param_init = np.zeros(x_basic.shape[1] + 1) # includes the intercept term
-
-bce_prec, bce_recall, bce_model = run_model(
-    x_basic, 
-    y_basic, 
-    xtest_basic, 
-    ytest_basic, 
-    0.5, 
-    param_init, 
-    loss = nn.BCEWithLogitsLoss, 
-    loss_params = {"pos_weight": 3 * torch.ones(len(y_basic))}
-)
-
-bce_prec, bce_recall
-
-# + tags=[]
-
-sklearnlogreg = LogisticRegression()
-sklearnlogreg = sklearnlogreg.fit(x_basic, y_basic)
-param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
-
-maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
-    x_basic, 
-    y_basic, 
-    xtest_basic, 
-    ytest_basic, 
-    0.5, 
-    param_init,
-    loss = MinPrecLoss, 
-    loss_params = {
-        'min_prec':0.8, 
-        'lmbda': 1e4, 
-        'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75},
-        # 'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
-    }
-)
+def bound_sigmoid(x, m=1, b=0, eps=0.75, delta=0.035, gamma=7.):
+    return (1+gamma*delta)*expit(m*x + b)
 
 
-maxrecall_prec, maxrecall_recall
-# -
+# + slideshow={"slide_type": "-"}
+import matplotlib.pyplot as plt
+import numpy as np
 
-decision_line = decisionLine(maxrecall_model, xtest_basic, thresh=0.5, eps=0.05, gridsize=100)
-decision_line[:10]
+x = np.linspace(-1, 1, 100)
 
-# +
-cdict = {0: 'green', 1: 'blue'}
-mdict = {0:'o', 1:'x'}
+y_tpc = np.where(x<0, 0, 1) + gamma*delta
+y_tpc_bound = bound_sigmoid(x, m=m_lower, b=b_lower)
 
-fig, ax = plt.subplots()
-for g in np.unique(ytest_basic):
-    ix = np.where(ytest_basic == g)
-    ax.scatter(xtest_basic[ix,0], xtest_basic[ix,1], c = cdict[g], marker=mdict[g], label = g, alpha=0.3)
-ax.legend()
+y_fpc = np.where(x<0, 0, 1)
+y_fpc_bound = bound_sigmoid(x, m=m_upper, b=b_upper)
 
-ax.plot(decision_line[:,0], decision_line[:, 1], c='red')
+plt.plot(x, y_tpc, drawstyle='steps', linestyle='dotted', color='blue')
+plt.plot(x, y_tpc_bound, color='blue', label='tpc')
 
+plt.plot(x, y_fpc, drawstyle='steps', linestyle='dotted', color='green')
+plt.plot(x, y_fpc_bound, color='green', label='fpc')
+
+plt.xlabel(r'$f_\theta(x)-b$')
+plt.ylabel(r'$\hat{y}$')
+
+plt.legend()
 plt.show()
 
-
 # +
-#https://discuss.pytorch.org/t/how-to-initialize-weights-in-nn-sequential-container/8534/2?u=ilanfri
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
-        torch.nn.init.normal_(m.weight, 0.0, 1.0)
-    elif classname.find('BatchNorm') != -1:
-        torch.nn.init.normal_(m.weight, 1.0, 0.02)
-        torch.nn.init.zeros_(m.bias)
+if modelchosen=='mlp' and losschosen == 'minprec':
+    mlp_minprec_model = MLP(hidden_width=2, loss=MinPrecLoss, loss_arguments=loss_params)
+elif modelchosen == 'mlp' and losschosen == 'bce':
+    mlp_minprec_model = MLP(hidden_width=2, loss=nn.BCEWithLogitsLoss, loss_arguments={})
+    y_basic = y_basic[:, np.newaxis]
+elif modelchosen == 'linear' and losschosen == 'bce':
+    param_init = np.zeros(x_basic.shape[1] + 1)
+    mlp_minprec_model = LinearScore(nfeat=x_basic.shape[1], model_param_init=param_init, loss=nn.BCEWithLogitsLoss, loss_arguments={})
+elif modelchosen == 'linear' and losschosen == 'minprec':
+    param_init = np.zeros(x_basic.shape[1] + 1)
+    mlp_minprec_model = LinearScore(nfeat=x_basic.shape[1], model_param_init=param_init, loss=MinPrecLoss, loss_arguments=loss_params)
 
-
-loss_params = {
-        'min_prec':0.8, 
-        'lmbda': 1e3, 
-        'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75}
-        #'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
-    }
-
-mlp_minprec_model = MLP(hidden_width=2, loss=MinPrecLoss, loss_arguments=loss_params)
 
 #mlp_minprec_model.apply(weights_init)
 
 
-optimizer_minprec = optim.Adam(mlp_minprec_model.parameters(), lr=1.0)
+optimizer_minprec = optim.Adam(mlp_minprec_model.parameters(), lr=lr, weight_decay=L2_coeff)
 mlp_minprec_model.fit(x_basic, y_basic, optimizer_minprec)
     
 phat_minprec = mlp_minprec_model.predict_proba(xtest_basic)
@@ -432,9 +406,7 @@ phat_minprec = mlp_minprec_model.predict_proba(xtest_basic)
 np.random.choice(phat_minprec,10)
 # -
 
-x_basic.shape
-
-decision_line = decisionLine(mlp_minprec_model, xtest_basic, thresh=0.5, eps=0.05, gridsize=100)
+decision_line = decisionLine(mlp_minprec_model, xtest_basic)
 decision_line[:10]
 
 # +
@@ -450,8 +422,15 @@ ax.legend()
 ax.plot(decision_line[:,0], decision_line[:, 1], c='red')
 
 plt.show()
-# -
 
+# +
+yhat = (phat_minprec >= 0.5).astype(int)
+    
+prec = precision_score(ytest_basic, yhat)
+rec = recall_score(ytest_basic, yhat)
+
+prec, rec
+# -
 # ### moons dataset
 
 # +
@@ -465,53 +444,44 @@ ymoons_train = ymoons[:9000]
 
 xmoons_test = xmoons[9000:]
 ymoons_test = ymoons[9000:]
-# -
-
-plt.scatter(xmoons_train[:,0], xmoons_train[:,1], c=ymoons_train, alpha=0.3)
 
 # +
-
-param_init = np.zeros(xmoons_train.shape[1] + 1) # includes the intercept term
-
-bce_prec, bce_recall, bce_model = run_model(
-    xmoons_train,
-    ymoons_train,
-    xmoons_test,
-    ymoons_test,
-    0.5, 
-    param_init, 
-    loss = nn.BCEWithLogitsLoss, 
-    loss_params = {}
-)
-
-bce_prec, bce_recall
+#plt.scatter(xmoons_train[:,0], xmoons_train[:,1], c=ymoons_train, alpha=0.3)
 
 # +
-sklearnlogreg = LogisticRegression()
-sklearnlogreg = sklearnlogreg.fit(xmoons_train, ymoons_train)
-param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+#mlp_minprec_model = MLP(hidden_width=2, loss=MinPrecLoss, loss_arguments=loss_params)
 
-maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
-    xmoons_train,
-    ymoons_train,
-    xmoons_test,
-    ymoons_test, 
-    0.5, 
-    param_init,
-    loss = MinPrecLoss, 
-    loss_params = {
-        'min_prec':0.8, 
-        'lmbda': 1e4, 
-        'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75},
-        # 'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
-    }
-)
+if modelchosen=='mlp' and losschosen == 'minprec':
+    mlp_minprec_model = MLP(hidden_width=2, loss=MinPrecLoss, loss_arguments=loss_params)
+elif modelchosen == 'mlp' and losschosen == 'bce':
+    mlp_minprec_model = MLP(hidden_width=2, loss=nn.BCEWithLogitsLoss, loss_arguments={})
+    ymoons_train = ymoons_train[:, np.newaxis]
+elif modelchosen == 'linear' and losschosen == 'bce':
+    param_init = np.zeros(xmoons_train.shape[1] + 1)
+    mlp_minprec_model = LinearScore(nfeat=xmoons_train.shape[1], model_param_init=param_init, loss=nn.BCEWithLogitsLoss, loss_arguments={})
+elif modelchosen == 'linear' and losschosen == 'minprec':
+    param_init = np.zeros(xmoons_train.shape[1] + 1)
+    mlp_minprec_model = LinearScore(nfeat=xmoons_train.shape[1], model_param_init=param_init, loss=MinPrecLoss, loss_arguments=loss_params)
 
 
-maxrecall_prec, maxrecall_recall
+#mlp_minprec_model.apply(weights_init)
+
+
+optimizer_minprec = optim.Adam(mlp_minprec_model.parameters(), lr=lr, weight_decay=L2_coeff)
+mlp_minprec_model.fit(xmoons_train, ymoons_train, optimizer_minprec)
+    
+phat_minprec = mlp_minprec_model.predict_proba(xmoons_test)
+#yhat = (phat >= 0.5).astype(int)
+    
+#prec = precision_score(ytest_toy, yhat)
+#rec = recall_score(ytest_toy, yhat)
+
+#prec, rec
+
+np.random.choice(phat_minprec,10)
 # -
 
-decision_line = decisionLine(maxrecall_model, xmoons_test, thresh=0.5, eps=0.05, gridsize=100)
+decision_line = decisionLine(mlp_minprec_model, xmoons_test)
 decision_line[:10]
 
 # +
@@ -527,8 +497,15 @@ ax.legend()
 ax.plot(decision_line[:,0], decision_line[:, 1], c='red')
 
 plt.show()
-# -
 
+# +
+yhat = (phat_minprec >= 0.5).astype(int)
+    
+prec = precision_score(ymoons_test, yhat)
+rec = recall_score(ymoons_test, yhat)
+
+prec, rec
+# -
 # ### Dataset from paper
 
 # +
@@ -540,16 +517,16 @@ from data import toydata
 x_toy, y_toy, _, _, _, _ = toydata.create_toy_dataset()
 
 # +
-cdict = {0: 'green', 1: 'blue'}
-mdict = {0:'o', 1:'x'}
+#cdict = {0: 'green', 1: 'blue'}
+#mdict = {0:'o', 1:'x'}
 
-fig, ax = plt.subplots()
-for g in np.unique(y_toy):
-    ix = np.where(y_toy == g)
-    ax.scatter(x_toy[ix,0], x_toy[ix,1], c = cdict[g], marker=mdict[g], label = g, alpha=0.3)
-ax.legend()
+#fig, ax = plt.subplots()
+#for g in np.unique(y_toy):
+#    ix = np.where(y_toy == g)
+#    ax.scatter(x_toy[ix,0], x_toy[ix,1], c = cdict[g], marker=mdict[g], label = g, alpha=0.3)
+#ax.legend()
 
-plt.show()
+#plt.show()
 
 # +
 idx = np.array(range(y_toy.shape[0]))
@@ -564,81 +541,36 @@ xtest_toy = x_toy[idx[300:]]
 ytest_toy = y_toy[idx[300:]]
 
 # +
-
-param_init = np.zeros(xtrain_toy.shape[1] + 1) # includes the intercept term
-
-bce_prec, bce_recall, bce_model = run_model(
-    xtrain_toy,
-    ytrain_toy,
-    xtest_toy,
-    ytest_toy,
-    0.5, 
-    param_init, 
-    loss = nn.BCEWithLogitsLoss, 
-    loss_params = {}
-)
-
-bce_prec, bce_recall
-
-# +
-sklearnlogreg = LogisticRegression()
-sklearnlogreg = sklearnlogreg.fit(xtrain_toy, ytrain_toy)
-param_init = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
-
-maxrecall_prec, maxrecall_recall, maxrecall_model = run_model(
-    xtrain_toy,
-    ytrain_toy,
-    xtest_toy,
-    ytest_toy, 
-    0.5, 
-    param_init,
-    loss = MinPrecLoss, 
-    loss_params = {
-        'min_prec':0.8, 
-        'lmbda': 1e4, 
-        'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75},
-        # 'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
-    }
-)
-
-
-maxrecall_prec, maxrecall_recall
-# -
-decision_line = decisionLine(maxrecall_model, xtest_toy, thresh=0.5, eps=0.05, gridsize=100)
-decision_line[:10]
-
-# +
-cdict = {0: 'green', 1: 'blue'}
-mdict = {0:'o', 1:'x'}
-
-fig, ax = plt.subplots()
-for g in np.unique(ytest_toy):
-    ix = np.where(ytest_toy == g)
-    ax.scatter(xtest_toy[ix,0], xtest_toy[ix,1], c = cdict[g], marker=mdict[g], label = g, alpha=0.3)
-ax.legend()
-
-ax.plot(decision_line[:,0], decision_line[:, 1], c='red')
-
-plt.show()
-
-# +
 #loss_params = {"pos_weight": 3 * torch.ones(len(y_basic))}
 
-mlp_model = MLP(hidden_width=4, loss=nn.BCEWithLogitsLoss, loss_arguments={})
-optimizer = optim.Adam(mlp_model.parameters(), lr=0.1)
-mlp_model.fit(xtrain_toy, ytrain_toy[:, np.newaxis], optimizer)
+#mlp_model = MLP(hidden_width=4, loss=nn.BCEWithLogitsLoss, loss_arguments={})
+if modelchosen=='mlp' and losschosen == 'minprec':
+    mlp_minprec_model = MLP(hidden_width=2, loss=MinPrecLoss, loss_arguments=loss_params)
+elif modelchosen == 'mlp' and losschosen == 'bce':
+    mlp_minprec_model = MLP(hidden_width=2, loss=nn.BCEWithLogitsLoss, loss_arguments={})
+    ytrain_toy = ytrain_toy[:, np.newaxis]
+elif modelchosen == 'linear' and losschosen == 'bce':
+    param_init = np.zeros(xtrain_toy.shape[1] + 1)
+    mlp_minprec_model = LinearScore(nfeat=xtrain_toy.shape[1], model_param_init=param_init, loss=nn.BCEWithLogitsLoss, loss_arguments={})
+elif modelchosen == 'linear' and losschosen == 'minprec':
+    param_init = np.zeros(xtrain_toy.shape[1] + 1)
+    mlp_minprec_model = LinearScore(nfeat=xtrain_toy.shape[1], model_param_init=param_init, loss=MinPrecLoss, loss_arguments=loss_params)
+
+
+optimizer = optim.Adam(mlp_minprec_model.parameters(), lr=lr, weight_decay=L2_coeff)
+mlp_minprec_model.fit(xtrain_toy, ytrain_toy, optimizer)
     
-phat = mlp_model.predict_proba(xtest_toy)
+phat = mlp_minprec_model.predict_proba(xtest_toy)
 #yhat = (phat >= 0.5).astype(int)
     
 #prec = precision_score(ytest_toy, yhat)
 #rec = recall_score(ytest_toy, yhat)
 
 #prec, rec
-phat[:10]
+np.random.choice(phat,10)
 # -
 
-decision_line = decisionLine(mlp_model, xtest_toy, thresh=0.5, eps=0.1, gridsize=500)
+decision_line = decisionLine(mlp_minprec_model, xtest_toy)
 decision_line[:10]
 
 # +
@@ -663,69 +595,5 @@ prec = precision_score(ytest_toy, yhat)
 rec = recall_score(ytest_toy, yhat)
 
 prec, rec
-# -
-
-
-
-
-
-# +
-#https://discuss.pytorch.org/t/how-to-initialize-weights-in-nn-sequential-container/8534/2?u=ilanfri
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
-        torch.nn.init.normal_(m.weight, 0.0, 1.0)
-    elif classname.find('BatchNorm') != -1:
-        torch.nn.init.normal_(m.weight, 1.0, 0.02)
-        torch.nn.init.zeros_(m.bias)
-loss_params = {
-        'min_prec':0.8, 
-        'lmbda': 1e5, 
-        'sigmoid_hyperparams': {'gamma': 7, 'delta': 0.035, 'eps': 0.75}
-        # 'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
-    }
-
-mlp_minprec_model = MLP(hidden_width=4, loss=MinPrecLoss, loss_arguments=loss_params)
-
-#mlp_minprec_model.apply(weights_init)
-
-
-optimizer_minprec = optim.Adam(mlp_minprec_model.parameters(), lr=0.1)
-mlp_minprec_model.fit(xtrain_toy, ytrain_toy, optimizer_minprec)
-    
-phat_minprec = mlp_minprec_model.predict_proba(xtest_toy)
-#yhat = (phat >= 0.5).astype(int)
-    
-#prec = precision_score(ytest_toy, yhat)
-#rec = recall_score(ytest_toy, yhat)
-
-#prec, rec
-
-np.random.choice(phat_minprec,10)
-# -
-
-decision_line_minprec = decisionLine(mlp_minprec_model, xtest_toy, thresh=0.5, eps=0.1, gridsize=100)
-decision_line_minprec[:10]
-
-# +
-cdict = {0: 'green', 1: 'blue'}
-mdict = {0:'o', 1:'x'}
-
-fig, ax = plt.subplots()
-for g in np.unique(ytest_toy):
-    ix = np.where(ytest_toy == g)
-    ax.scatter(xtest_toy[ix,0], xtest_toy[ix,1], c = cdict[g], marker=mdict[g], label = g, alpha=0.3)
-ax.legend()
-
-ax.scatter(decision_line_minprec[:,0], decision_line_minprec[:, 1], c='red')
-
-plt.show()
-# +
-yhat_minprec = (phat_minprec >= 0.5).astype(int)
-    
-prec_minprec = precision_score(ytest_toy, yhat_minprec)
-rec_minprec = recall_score(ytest_toy, yhat_minprec)
-
-prec_minprec, rec_minprec
 # -
 
