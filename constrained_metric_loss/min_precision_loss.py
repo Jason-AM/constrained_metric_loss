@@ -61,7 +61,7 @@ class MinPrecLoss(nn.Module):
         g = -tpc + self.min_prec / (1.0 - self.min_prec) * fpc + self.gamma * self.delta * Nplus
 
         # Eqn. 12
-        loss = -tpc + self.lmbda * nn.ReLU()(g)
+        loss = -tpc + self.lmbda * torch.pow(nn.ReLU()(g), 2) #+ Nplus*fpc
         # The reason for the odd way of calling the ReLU function:
         # https://discuss.pytorch.org/t/multiplication-of-activation-function-with-learnable-parameter-scalar/113746/2
 
