@@ -40,7 +40,9 @@ init_notebook_mode()
 
 # -
 
-from constrained_metric_loss.min_precision_loss import MinPrecLoss, MinPrecLossLogForm
+from constrained_metric_loss.min_precision_loss import (
+    MinPrecLoss, MinPrecLossLogForm, MinPrecLeakyLoss
+)
 from constrained_metric_loss.bce_type_loss import BCELogitManual
 
 # # data
@@ -158,6 +160,25 @@ def logloss(beta, min_prec=0.9, lmbda=100):
     
     return loss.forward(f, y).numpy()
 
+
+def leaky_loss(beta, min_prec=0.9, lmbda=100, lmbda2=1000, leaky_slope=0.01):
+    torch_beta = torch.from_numpy(beta).float()
+    model_func = lambda x:  x @ torch_beta
+
+    x_w_dummy_for_int = np.column_stack((x, np.ones([x.shape[0]])))
+    x_w_dummy_for_int = torch.from_numpy(x_w_dummy_for_int).float()
+    
+    f = model_func(x_w_dummy_for_int)
+    
+    loss = MinPrecLeakyLoss(
+        min_prec = min_prec,
+        lmbda = lmbda,
+        lmbda2 = lmbda2,
+        leaky_slope=leaky_slope
+    )
+    
+    return loss.forward(f, y).numpy()
+
 # +
 # def get_loss_from_new_form(beta, min_prec=0.9, lmbda= 1e-3):
 #     min_prec = min_prec
@@ -213,9 +234,14 @@ def get_loss_landscape(loss_function, num_samples, w0_width, w1_width, kwargs={}
     return go.Figure(data=data, layout=layout)
 
 
-iplot(get_loss_landscape(loss_from_script, 80, 20, 5, {'min_prec': 0.9, 'lmbda': 1e4}))
+iplot(get_loss_landscape(loss_from_script, 80, 3, 2, {'min_prec': 0.9, 'lmbda': 1e4}))
 
-iplot(get_loss_landscape(logloss, 80, 20, 5, {'min_prec': 0.9, 'lmbda': 1e4}))
+iplot(
+    get_loss_landscape(
+        leaky_loss, 80, 3, 2, 
+        {'min_prec': 0.9, 'lmbda': 1e4, 'lmbda2': 1e6, 'leaky_slope':0.001}
+    )
+)
 
 # # BCE tests
 
@@ -259,10 +285,12 @@ plt.legend()
 plt.plot(x, zero_one, label='0-1')
 
 torch_x = torch.linspace(-10, 10, 100)
+torch_relu = nn.ReLU()( torch_x)
 torch_relu_leaky_relu = nn.ReLU()(1 - nn.LeakyReLU(negative_slope=0.01)(torch_x))
+torch_leaky_relu_leaky_relu = nn.LeakyReLU(negative_slope=-0.01)(1 - nn.LeakyReLU(negative_slope=0.01)(torch_x))
+loglogsigmoid = -torch.log(torch.sigmoid(torch_x))
 
-
-plt.plot(torch_x.numpy(), torch_relu_leaky_relu.numpy())
+plt.plot(torch_x.numpy(), loglogsigmoid.numpy())
 # -
 
 
