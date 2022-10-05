@@ -5,11 +5,11 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.8
+#       jupytext_version: 1.14.1
 #   kernelspec:
-#     display_name: Python 3 (ipykernel)
+#     display_name: Python [conda env:min_prec]
 #     language: python
-#     name: python3
+#     name: conda-env-min_prec-py
 # ---
 
 # + [markdown] slideshow={"slide_type": "slide"}
@@ -442,12 +442,139 @@ plt.show()
 #
 # See e.g. https://web.stanford.edu/~boyd/papers/pdf/max_sum_sigmoids.pdf
 
+# # loss landscapes
+#
+# Since we are looking at simple linear models we can actually take a look at the loss-landscape. It provides some useful insights.
+#
+# Since the loss function requires data to be defined we will use the dataset found in repo used by Rath and Hughes. We will discuss this in more detail at some point but this dataset is the type that the minimum precision loss seems to work best for.
 
 
+# +
+from data import toydata
+
+x_toy, y_toy, _, _, _, _ = toydata.create_toy_dataset()
+
+x = torch.from_numpy(x_toy).float()
+y = torch.from_numpy(y_toy).float()
+
+# +
+import matplotlib.pyplot as plt
+
+cdict = {0: 'green', 1: 'blue'}
+mdict = {0:'o', 1:'x'}
+
+fig, ax = plt.subplots()
+for g in np.unique(y_toy):
+    ix = np.where(y_toy == g)
+    ax.scatter(x_toy[ix,0], x_toy[ix,1], c = cdict[g], marker=mdict[g], label = g, alpha=0.3)
+ax.legend()
+
+plt.show()
+
+# +
+from plotly.offline import init_notebook_mode, iplot, plot
+import plotly.graph_objects as go
+from sklearn.linear_model import LogisticRegression
+import numpy as np
+
+from constrained_metric_loss.min_precision_loss import MinPrecLoss
+
+init_notebook_mode()
+
+# +
+
+sklearnlogreg = LogisticRegression()
+sklearnlogreg = sklearnlogreg.fit(x,y)
+sklearnbetas = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+
+
+# -
+
+def bce_loss(beta):
+    torch_beta = torch.from_numpy(beta).float()
+    model_func = lambda xx:  xx @ torch_beta
+
+    x_w_dummy_for_int = np.column_stack((x, np.ones([x.shape[0]])))
+    x_w_dummy_for_int = torch.from_numpy(x_w_dummy_for_int).float()
+
+    loss_funct = nn.BCEWithLogitsLoss()
+
+    return loss_funct(model_func(x_w_dummy_for_int), y).numpy()
 
 # + slideshow={"slide_type": "skip"}
 
 
+def min_prec_loss(beta, min_prec=0.9, lmbda=100):
+    torch_beta = torch.from_numpy(beta).float()
+    model_func = lambda x:  x @ torch_beta
+
+    x_w_dummy_for_int = np.column_stack((x, np.ones([x.shape[0]])))
+    x_w_dummy_for_int = torch.from_numpy(x_w_dummy_for_int).float()
+    
+    f = model_func(x_w_dummy_for_int)
+    
+    loss = MinPrecLoss(
+        min_prec = min_prec,
+        lmbda = lmbda,
+        sigmoid_hyperparams = {"gamma": 7, "delta": 0.035},
+        sigmoid_params = {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
+    )
+    
+    return loss.forward(f, y).numpy()
+
+
+# -
+
+
+def get_loss_landscape(loss_function, num_samples, w0_width, w1_width, kwargs={}):
+    N = num_samples
+    xv, yv = np.meshgrid(
+        sklearnbetas[0] + np.linspace(-w0_width, w0_width, N), 
+        sklearnbetas[1] + np.linspace(-w1_width, w1_width, N)
+    )
+    input_params = np.column_stack([xv.ravel(), yv.ravel(), sklearnbetas[2]*np.ones(N*N)])
+
+    losses = np.apply_along_axis(loss_function, 1, input_params, **kwargs)
+    
+    data = [
+        go.Surface(z=losses.reshape(xv.shape), x=xv, y=yv),
+        go.Scatter3d(
+            x = [sklearnbetas[0]], 
+            y = [sklearnbetas[1]], 
+            z = [loss_function(sklearnbetas, **kwargs)], 
+            mode='markers',
+            marker=dict(size=12, color='black')
+        )
+    ]
+
+    layout = go.Layout(
+        width=800,
+        height=800,
+    )
+    return go.Figure(data=data, layout=layout)
+
+
+# In the following plots the model's intercept value is held equal at the value obtained using BCE with logits loss. Then we vary the weights of the features for the x-y axis. The total loss value is plotted on the z-axis. 
+
+iplot(get_loss_landscape(bce_loss, 40, 4, 4, {}))
+
+iplot(get_loss_landscape(min_prec_loss, 40, 4, 4, {'min_prec': 0.9, 'lmbda': 1e3}))
+
+# # Implementation and performance
+#
+# Due to the non-linear nature of the loss function we find that the initilization of the gradient decent is vital. In order to account for this the authors of the paper try a large range of random initial conditions and select the best one. 
+#
+# On the same toy dataset as we used above let's observe what decision boundaries are being drawn on the data. We will use the optimal boundary where we define optimal as one that most closely meets the minimum precision bound whilst maximsing the FBeta score on the test data.
+
+
+
+
+
+
+
+# # Outlook
+#
+# An important realization in recent weeks is to try understand the role
 
 # + [markdown] slideshow={"slide_type": "skip"}
 # Put it all together: we have a loss function to fit!

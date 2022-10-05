@@ -103,7 +103,7 @@ def loss_from_script(beta, min_prec=0.9, lmbda=100):
     )
     
     return loss.forward(f, y).numpy()
-    
+
 
 
 # +
@@ -160,6 +160,8 @@ def get_loss_landscape(loss_function, num_samples, w0_width, w1_width, kwargs={}
     )
     return go.Figure(data=data, layout=layout)
 
+
+iplot(get_loss_landscape(loss_from_script, 40, 4, 4, {'min_prec': 0.9, 'lmbda': 1e-3}))
 
 iplot(get_loss_landscape(loss_from_script, 40, 4, 4, {'min_prec': 0.9, 'lmbda': 1e-3}))
 
