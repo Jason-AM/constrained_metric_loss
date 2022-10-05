@@ -39,19 +39,27 @@ class MinPrecLoss(nn.Module):
             self.bhat = sigmoid_params["bhat"]
 
     def forward(self, f, y):
-        tpc = torch.sum(
-            torch.where(
-                y == 1.0,
-                (1 + self.gamma * self.delta) * torch.sigmoid(self.mtilde * f + self.btilde),
-                torch.tensor(0.0),
-            )
+        # tpc = torch.sum(
+        #     torch.where(
+        #         y == 1.0,
+        #         (1 + self.gamma * self.delta) * torch.sigmoid(self.mtilde * f + self.btilde),
+        #         torch.tensor(0.0),
+        #     )
+        # )
+
+        tpc = torch.dot(
+            y.flatten(), (1 + self.gamma * self.delta) * torch.sigmoid(self.mtilde * f + self.btilde).flatten()
         )
 
-        # Eqn 10
-        fpc = torch.sum(
-            torch.where(
-                y == 0.0, (1 + self.gamma * self.delta) * torch.sigmoid(self.mhat * f + self.bhat), torch.tensor(0.0)
-            )
+        # # Eqn 10
+        # fpc = torch.sum(
+        #     torch.where(
+        #         y == 0.0, (1 + self.gamma * self.delta) * torch.sigmoid(self.mhat * f + self.bhat), torch.tensor(0.0)
+        #     )
+        # )
+
+        fpc = torch.dot(
+            (1 - y).flatten(), (1 + self.gamma * self.delta) * torch.sigmoid(self.mhat * f + self.bhat).flatten()
         )
 
         # Line below eqn. 1 in paper
