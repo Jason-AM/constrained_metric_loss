@@ -18,6 +18,15 @@
 #  by Preetish Rath, Michael C. Hughes
 #  
 #  Commentary by Jason Myers and Ilan Fridman Rojas
+# -
+
+# %load_ext autoreload
+# %autoreload 2
+
+# +
+import os
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
 # + [markdown] slideshow={"slide_type": "slide"}
 # ## Introduction
@@ -566,7 +575,231 @@ iplot(get_loss_landscape(min_prec_loss, 40, 4, 4, {'min_prec': 0.9, 'lmbda': 1e3
 #
 # On the same toy dataset as we used above let's observe what decision boundaries are being drawn on the data. We will use the optimal boundary where we define optimal as one that most closely meets the minimum precision bound whilst maximsing the FBeta score on the test data.
 
+# +
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, roc_curve
 
+from constrained_metric_loss.linear_classification_model import LinearClassificationModel
+
+
+# -
+
+def optimal_prec_recall_search(target_prec, prec_recall_list, tol=0.02, beta=1):
+    prec_recall_arr = np.array(prec_recall_list)
+    diff_to_target = prec_recall_arr[:,0] - target_prec
+    candidates = prec_recall_arr[diff_to_target>-tol]
+    fbeta_score = (1+beta**2) * (candidates[:,0] * candidates[:,1])/((beta**2)*candidates[:,0] + candidates[:,1])
+    return candidates[np.argsort(fbeta_score)[::-1]]
+
+
+# +
+X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42, stratify=y)
+
+data_dict = {"X_train": X_train, "X_test": X_test, "y_train": y_train, "y_test": y_test}
+
+target_prec = 0.8
+
+# +
+sklearnlogreg = LogisticRegression()
+sklearnlogreg = sklearnlogreg.fit(data_dict["X_train"], data_dict["y_train"])
+
+phat = sklearnlogreg.predict_proba(data_dict["X_test"])[:, 1]
+
+prec_recalls = []
+for thresh in np.arange(0., 1.01, 0.01):
+    
+    yhat = (phat >= thresh).astype(int)
+
+    prec = precision_score(data_dict["y_test"], yhat, zero_division=0)
+    rec = recall_score(data_dict["y_test"], yhat, zero_division=0)
+
+    prec_recalls.append([prec, rec, thresh])
+    
+optimal_prec_recall_search(target_prec, prec_recalls, tol=0.15)[:15]
+
+
+# +
+# set up function to run model
+
+def run_model(
+    data_dict,
+    thresh,
+    model_param_init,
+    loss,
+    loss_params,
+    n_batches=200,
+):
+
+    model = LinearClassificationModel(
+        nfeat=data_dict["X_train"].shape[1],
+        model_param_init=model_param_init,
+        loss=loss,
+        loss_arguments=loss_params,
+    )
+
+    optimizer = optim.Adam(model.parameters(), lr=0.1)
+    
+    model.fit(data_dict["X_train"], data_dict["y_train"], optimizer, n_batches=n_batches)
+
+    phat = model.predict_proba(data_dict["X_test"])
+    yhat = (phat >= thresh).astype(int)
+
+    prec = precision_score(data_dict['y_test'], yhat, zero_division=0)
+    rec = recall_score(data_dict['y_test'], yhat, zero_division=0)
+
+    return prec, rec, model
+
+
+# +
+# get grid of initialization params centered on the sklearn solution
+
+def full_grid(seed_vals, number_per_dim, seed_multiplier = 10):
+
+    linspaces = [
+        np.linspace(-seed_multiplier*seed, seed_multiplier*seed, number_per_dim) 
+        for seed in seed_vals
+    ]
+    n_times_away_grid = np.meshgrid(*linspaces)
+    search_space = [dim_params.flatten() for dim_params in n_times_away_grid]
+    
+    return np.column_stack(search_space)
+
+def random_sampling_from_grid(
+    seed_vals, number_per_dim, seed_multiplier = 10, num_to_select=50
+):
+    rng = np.random.default_rng(0)
+    return rng.choice(
+        full_grid(
+            seed_vals, 
+            number_per_dim=number_per_dim, 
+            seed_multiplier=seed_multiplier
+        ), 
+        size = num_to_select
+    )
+    
+
+
+# +
+# seed with BCE logit loss params
+param_seed = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
+
+# generate ramdom grid
+random_grid = random_sampling_from_grid(
+    param_seed, number_per_dim=7, seed_multiplier=15, num_to_select=50
+)
+
+# finally include random noise centered on seed and centerd on normal
+rng = np.random.default_rng(0)
+
+param_inits = np.vstack(
+    [
+        param_seed,
+        random_grid,
+        rng.normal(0, 3, size=(5,len(param_seed))),
+        param_seed + rng.normal(0, 3, size=(5,len(param_seed)))
+    ]
+)
+
+
+# -
+
+# Using 61 different inital conditions for the minimization we get the following top results
+
+# +
+# %%time
+
+prec_recalls = []
+for param_i, param_init in enumerate(param_inits):
+
+    prec, recall, model = run_model(
+        data_dict,
+        0.5,
+        param_init,
+        loss=MinPrecLoss,
+        loss_params={
+            "min_prec": target_prec,
+            "lmbda":  1e4,
+            "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
+        },
+        n_batches= 500
+    )
+    
+    prec_recalls.append([prec, recall, int(param_i), model])
+    
+optimal_minprec_models = optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)
+optimal_minprec_models[:15, :2]
+
+
+# -
+
+def decisionLine(model, testdata, thresh=0.5, eps=0.05, gridsize=100):
+    
+    """Takes a trained model with a predict_proba() method, and returns the coordinates
+    for the decision boundary, where the boundary is set by points where the predicted
+    probability is within eps of the threshold thresh.
+    
+    This is computed on a grid of size gridsize x gridsize, which covers the range 
+    of testdata
+    
+    Function is intended only to plot decision boundary for 2D datasets
+    
+    Inputs:
+    model: trained model with predict_proba() method
+    testdata: the test data (only used to compute grid boundaries)
+    thresh: probability threshold at which decision boundary is set
+    eps: tolerance around the threshold (exact value thresh is rarely predicted)
+    gridsize: number of points to predict on for grid, per dimension
+    
+    Output
+    2D coordinates of decision boundary line
+    """
+    
+    xmin = testdata[:, 0].min()
+    xmax = testdata[:, 0].max()
+
+    ymin = testdata[:, 1].min()
+    ymax = testdata[:, 1].max()
+
+    xx, yy = np.meshgrid(np.linspace(xmin, xmax, gridsize), np.linspace(ymin, ymax, gridsize))
+
+    grid = np.column_stack([np.ravel(xx), np.ravel(yy)])
+    
+    p_grid = model.predict_proba(grid)
+    if len(p_grid.shape) > 1:
+        p_grid = p_grid[:, 0]
+    
+    
+    decision_line = grid[np.where(np.abs(p_grid-thresh) <= eps)]
+    
+    return decision_line
+
+# +
+cdict = {0: 'green', 1: 'blue'}
+mdict = {0:'o', 1:'x'}
+
+fig, ax = plt.subplots(figsize=(8,8))
+for g in np.unique( data_dict["y_test"]):
+    ix = np.where(data_dict["y_test"] == g)
+    ax.scatter(
+        data_dict["X_test"][ix,0], 
+        data_dict["X_test"][ix,1], 
+        c = cdict[g], 
+        marker=mdict[g], 
+        label = g, 
+        alpha=0.3    
+)
+
+
+decision_line_bce = decisionLine(sklearnlogreg, data_dict["X_test"], thresh=0.18, eps=0.001 )
+ax.plot(decision_line_bce[:,0], decision_line_bce[:, 1], c='red', label='bce decision boundary')
+
+decision_line_min_prec = decisionLine(optimal_minprec_models[0, -1], data_dict["X_test"], thresh=0.5, eps=0.01 )
+ax.plot(decision_line_min_prec[:,0], decision_line_min_prec[:, 1], c='orange', label='Min prec decision boundary')
+
+ax.legend()
+plt.show()
+
+# -
 
 
 
