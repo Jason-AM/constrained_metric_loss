@@ -230,32 +230,42 @@ class MinPrecLeakyLoss(_Loss):  # (nn.Module):
         # return nn.ReLU()(1 - (2 * y - 1) * x)
 
     @staticmethod
-    def logsigmoidloss(self, x, y, negative_slope):
+    def logsigmoidloss(x, y, negative_slope):
         return -torch.log(torch.sigmoid((2 * y - 1) * x))
 
     def forward(self, f, y):
 
         # tpc = torch.sum(torch.where(y == 1.0, 1 - self.leaky_relu_01_loss(f, 1.0, self.leaky_slope), torch.tensor(0.0)))
         # tpc = torch.dot(y.flatten(), 1 - self.leaky_relu_01_loss(f, 1.0, self.leaky_slope).flatten())
-        tpc = torch.dot(y.flatten(), 1 - self.logsigmoidloss(f, 1.0, self.leaky_slope).flatten())
+        # tpc = torch.dot(y.flatten(), 1 - self.logsigmoidloss(f, 1.0, self.leaky_slope).flatten())
 
         # fpc = torch.sum(torch.where(y == 0.0, self.leaky_relu_01_loss(f, 0.0, self.leaky_slope), torch.tensor(0.0)))
         # fpc = torch.dot(1 - y.flatten(), self.leaky_relu_01_loss(f, 0.0, self.leaky_slope).flatten())
-        fpc = torch.dot(1 - y.flatten(), self.logsigmoidloss(f, 0.0, self.leaky_slope).flatten())
-
-        fnc = torch.sum(torch.where(y == 1.0, self.leaky_relu_01_loss(f, 1.0, self.leaky_slope), torch.tensor(0.0)))
+        # fpc = torch.dot(1 - y.flatten(), self.logsigmoidloss(f, 0.0, self.leaky_slope).flatten())
 
         Nplus = torch.sum(y)
 
-        g = -tpc + self.min_prec / (1.0 - self.min_prec) * fpc + Nplus
+        # g = -tpc + self.min_prec / (1.0 - self.min_prec) * fpc + Nplus
 
-        loss = -tpc + self.lmbda * nn.ReLU()(g) + self.lmbda2 * nn.ReLU()(-tpc - fpc)
+        # loss = -tpc + self.lmbda * nn.ReLU()(g) + self.lmbda2 * nn.ReLU()(-tpc - fpc)
+
+        tpc = torch.dot(y.flatten(), 1 - self.leaky_relu_01_loss(f, 1.0, self.leaky_slope).flatten())
+        fpc = torch.dot(y.flatten(), self.leaky_relu_01_loss(f, 1.0, self.leaky_slope).flatten())
+        fnc = torch.dot(1 - y.flatten(), self.leaky_relu_01_loss(f, 0.0, self.leaky_slope).flatten())
 
         # loss = (
-        #     (1 + self.lmbda) * fnc
-        #     + self.lmbda * self.min_prec / (1.0 - self.min_prec) * fpc
+        #     (1 + self.lmbda) * fpc
+        #     + self.lmbda * self.min_prec / (1.0 - self.min_prec) * fnc
         #     - self.lmbda * Nplus
-        #     + self.lmbda2 * nn.ReLU()(-tpc - fpc)
+        #     # + self.lmbda2 * (-tpc - fpc)
         # )
-        # print(tpc, fpc)
+
+        # g = -tpc + self.min_prec / (1.0 - self.min_prec) * fpc + Nplus
+
+        # loss = -tpc + self.lmbda * g + self.lmbda2 * (-tpc - fpc)
+
+        g = fpc + self.min_prec / (1.0 - self.min_prec) * fnc - Nplus
+
+        loss = fpc + self.lmbda * nn.ReLU()(g)  # + self.lmbda2 * nn.ReLU()(-tpc - fpc)
+
         return loss
