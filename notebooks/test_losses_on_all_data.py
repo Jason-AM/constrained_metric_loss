@@ -40,6 +40,8 @@ from constrained_metric_loss.min_precision_loss import (
     MinPrecLoss, LearnableMinPrecLoss, MinPrecLeakyLoss
 )
 
+from constrained_metric_loss.linear_model import LinearModel, InitialParameterGenerator
+
 import openml
 
 # from plotly.offline import init_notebook_mode, iplot, plot
@@ -133,81 +135,57 @@ all_data_dict = all_data_dict | {
 # # run tests
 
 
-class classification_model_score(nn.Module):
-    """Produces classification scores for given loss"""
+# +
+def training_w_lambda_grad_ascent(model, data_dict, n_batches, num_lambda_grad_asscent):
+    list_of_model_params = list(model.parameters())
+    
+    model_params = list_of_model_params[:-num_lambda_grad_asscent]
+    optimizer = optim.Adam(model_params, lr=0.1)
 
-    def __init__(
-        self,
-        nfeat,
-        model_param_init,
-        loss,
-        loss_arguments,
-    ):
-        super().__init__()
+    lam = list_of_model_params[-num_lambda_grad_asscent:]
+    optimizer_lam = optim.Adam(lam, lr=0.01)
 
-        self.nfeat = nfeat
-        self.beta = nn.Parameter(torch.from_numpy(model_param_init).float())
-        assert nfeat + 1 == len(model_param_init), "Using the coefficient trick so need to add one extra parameter"
+    training_losses = model.fit_w_lambda_grad_ascent(
+        data_dict["X_train"], 
+        data_dict["y_train"],
+        optimizer, 
+        optimizer_lam,
+        n_batches=n_batches
+    )
+    
+    return model, training_losses
 
-        self.loss = loss
-        self.loss_arguments = loss_arguments
+def training_all_grad_descent(model, data_dict, n_batches):
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
 
-        self.loss_func = self.loss(**self.loss_arguments)
-
-    def forward(self, x, y):
-        x = np.column_stack((x, np.ones([x.shape[0]])))
-        x = torch.from_numpy(x).float()
-        y = torch.from_numpy(y)
-
-        self.f = x @ self.beta
-
-        return self.loss_func(self.f, y.float())
-
-    def sigmoid_of_score(self, xtest):
-
-        if len(xtest.shape) == 1:
-            xtest = xtest.reshape([1, self.nfeat])
-
-        xtest = np.column_stack((xtest, np.ones([xtest.shape[0]])))
-        xtest = torch.from_numpy(xtest).float()
-
-        f = xtest @ self.beta
-        return torch.sigmoid(f).detach().numpy().flatten()
-
-    def fit(self, x, y, optimizer, n_batches=200):
-        training_loss = []
-        for i in range(n_batches):
-            optimizer.zero_grad()
-            loss = self.forward(x, y)
-            loss.backward()
-            optimizer.step()
-            
-            training_loss.append(loss.detach().numpy())
-
-            
-        return training_loss
+    training_losses = model.fit(
+        data_dict["X_train"], 
+        data_dict["y_train"].reshape(-1,1),
+        optimizer, 
+        n_batches=n_batches
+    )
+    
+    return model, training_losses
 
 
 def run_model(
     data_dict,
-    thresh,
-    model_param_init,
-    loss,
-    loss_params,
+    model,
     n_batches=200,
+    num_lambda_grad_asscent=0,
+    thresh = 0.5
 ):
-
-    model = classification_model_score(
-        nfeat=data_dict["X_train"].shape[1],
-        model_param_init=model_param_init,
-        loss=loss,
-        loss_arguments=loss_params,
-    )
-
-    optimizer = optim.Adam(model.parameters(), lr=0.1)
-    # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.1)
-
-    training_losses = model.fit(data_dict["X_train"], data_dict["y_train"], optimizer, n_batches=n_batches)
+    
+    if num_lambda_grad_asscent==0:
+        model, training_losses = training_all_grad_descent(
+            model, data_dict, n_batches
+        )
+    else:
+        model, training_losses = training_w_lambda_grad_ascent(
+            model, data_dict, n_batches, num_lambda_grad_asscent
+        )
+    
+    
 
     phat = model.sigmoid_of_score(data_dict["X_test"])
     yhat = (phat >= thresh).astype(int)
@@ -216,13 +194,13 @@ def run_model(
     rec = recall_score(data_dict['y_test'], yhat, zero_division=0)
 
     return prec, rec, training_losses, model
-
+# -
 
 # ### performance comparisons
 
 all_data_dict.keys()
 
-data_dict = all_data_dict["creditcard"]
+data_dict = all_data_dict["paper_data"]
 target_prec = 0.8
 
 
@@ -254,79 +232,46 @@ for thresh in np.arange(0., 1.01, 0.01):
     
 optimal_prec_recall_search(target_prec, prec_recalls)[:15]
 
-
-# +
-def full_grid(seed_vals, number_per_dim, seed_multiplier = 10):
-
-    linspaces = [
-        np.linspace(-seed_multiplier*seed, seed_multiplier*seed, number_per_dim) 
-        for seed in seed_vals
-    ]
-    n_times_away_grid = np.meshgrid(*linspaces)
-    search_space = [dim_params.flatten() for dim_params in n_times_away_grid]
-    
-    return np.column_stack(search_space)
-
-def random_sampling_from_grid(
-    seed_vals, number_per_dim, seed_multiplier = 10, num_to_select=50
-):
-    rng = np.random.default_rng(0)
-    return rng.choice(
-        full_grid(
-            seed_vals, 
-            number_per_dim=number_per_dim, 
-            seed_multiplier=seed_multiplier
-        ), 
-        size = num_to_select
-    )
-    
-
-def linear_grid(seed_vals, number_per_dim, seed_multiplier = 10):
-    
-    linspaces = [
-        np.linspace(-seed_multiplier*seed, seed_multiplier*seed, number_per_dim) 
-        for seed in seed_vals
-    ]
-    
-    return np.column_stack(linspaces)
-
-
-
-
 # +
 param_seed = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
 
-# param_inits = random_sampling_from_grid(
-#     param_seed, number_per_dim=2, seed_multiplier=10, num_to_select=100
-# ) #full_grid(param_seed, 4, 10) 
+initial_param_gen = InitialParameterGenerator(param_seed)
+initial_param_gen.generate_samples_from_grid(num_to_select=5, number_per_dim=10, seed_multiplier=10)
+initial_param_gen.generate_normally_distributed_around_seed(number=5, var=5)
+initial_param_gen.generate_normally_distributed(number=5, mean=0, var=5)
 
-param_inits = linear_grid(param_seed, 50, 100)
+param_inits = initial_param_gen.initial_parameters
+# -
 
-param_inits = np.vstack([param_inits, param_seed])
-
-for seed in [1,2,3,4,5,6]:
-    rng = np.random.default_rng(seed)
-    param_inits = np.vstack([param_inits, param_seed + rng.normal(0, 1, len(param_seed))])
-    param_inits = np.vstack([param_inits, rng.normal(0, 1, len(param_seed))])
+# ### min prec loss w linear model
 
 # + tags=[]
 # %%time
+
+num_lambda_grad_asscent = 1
+train_lambda_with_ascent = num_lambda_grad_asscent != 0
+
 num_non_conv = 0
 prec_recalls = []
+
 for param_i, param_init in enumerate(param_inits):
+    
+    model = LinearModel(
+        nfeat=data_dict["X_train"].shape[1],
+        model_param_init=param_init,
+        loss=MinPrecLoss,
+        loss_arguments={
+            "min_prec": target_prec,
+            "lmbda":  nn.Parameter(torch.tensor([1e1]), requires_grad=train_lambda_with_ascent),
+            "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
+        },
+    )
 
     maxrecall_prec, maxrecall_recall, training_losses, _ = run_model(
         data_dict,
-        0.5,
-        param_init,
-        loss=MinPrecLoss,
-        loss_params={
-            "min_prec": target_prec,
-            "lmbda":  1e4,
-            "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
-            # 'sigmoid_params': {'mtilde': 6.85,'btilde': -3.54, 'mhat': 6.85, 'bhat': 1.59}
-        },
-        n_batches= 500
+        model,
+        n_batches= 2_000,
+        num_lambda_grad_asscent = num_lambda_grad_asscent
     )
     
     prec_recalls.append([maxrecall_prec, maxrecall_recall, int(param_i)])
@@ -335,29 +280,41 @@ for param_i, param_init in enumerate(param_inits):
 plt.show()
 print(num_non_conv/ len(param_inits))  
 optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
+# -
 
+
+# ### test new loss forms w linear model
 
 # +
 
 # %%time
+num_lambda_grad_asscent = 2
+train_lambda_with_ascent = num_lambda_grad_asscent != 0
+
+
 num_non_conv = 0
 prec_recalls = []
-leaky_grads = [0.05, 0.01] #np.logspace(-1, -3, 20)
+leaky_grads = [0.01] #np.logspace(-1, -3, 20)
 for param_i, param_init in enumerate(param_inits):
     for ls in leaky_grads:
-        new_prec, new_recall, new_training_losses, model = run_model(
-            data_dict,
-            0.5,
-            param_init,
+        
+        model = LinearModel(
+            nfeat=data_dict["X_train"].shape[1],
+            model_param_init=param_init,
             loss=MinPrecLeakyLoss,
-            # loss_params={"min_prec": target_prec, "lmbda": 1e7, 'lmbda2': 1e8, 'leaky_slope': 0.01},
-            loss_params={
+            loss_arguments={
                 "min_prec": target_prec, 
-                "lmbda": nn.Parameter(torch.tensor([1e4]), requires_grad=True), 
-                'lmbda2': nn.Parameter(torch.tensor([1e3]), requires_grad=True), 
+                "lmbda": nn.Parameter(torch.tensor([1e1]), requires_grad=train_lambda_with_ascent), 
+                'lmbda2': nn.Parameter(torch.tensor([1e3]), requires_grad=train_lambda_with_ascent), 
                 'leaky_slope': ls
             },
-            n_batches= 500
+        )
+        
+        new_prec, new_recall, new_training_losses, model = run_model(
+            data_dict,
+            model,
+            n_batches= 2_000,
+            num_lambda_grad_asscent = num_lambda_grad_asscent
         )
 
         lambdas = [ i.detach() for i in model.parameters()][1:]
@@ -371,8 +328,78 @@ optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
 
 
 # -
+# ### MLP 
+
+# +
+from constrained_metric_loss.mlp import MLP
 
 
 
+num_lambda_grad_asscent = 0
+train_lambda_with_ascent = num_lambda_grad_asscent != 0
+
+num_initialisations = 20
+
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform_(m.weight)
+        torch.nn.init.uniform_(m.bias,-1, 1)
+
+
+prec_recalls = []
+
+for _ in range(num_initialisations):
+        
+    # model = MLP(
+    #     nfeat=data_dict["X_train"].shape[1], 
+    #     hidden_width=4, 
+    #     loss=MinPrecLoss,
+    #     loss_arguments={
+    #         "min_prec": target_prec,
+    #         "lmbda":  nn.Parameter(torch.tensor([1e2]), requires_grad=train_lambda_with_ascent),
+    #         "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
+    #     },
+    # )
+    
+    # model = MLP(
+    #     nfeat=data_dict["X_train"].shape[1],
+    #     hidden_width=4, 
+    #     loss=MinPrecLeakyLoss,
+    #     loss_arguments={
+    #         "min_prec": target_prec, 
+    #         "lmbda": nn.Parameter(torch.tensor([1e2]), requires_grad=train_lambda_with_ascent), 
+    #         'lmbda2': nn.Parameter(torch.tensor([1e1]), requires_grad=train_lambda_with_ascent), 
+    #         'leaky_slope': 0.1
+    #     },
+    # )
+    
+    model = MLP(
+        nfeat=data_dict["X_train"].shape[1],
+        hidden_width=4, 
+        loss=nn.HingeEmbeddingLoss,
+        loss_arguments={},
+    )
+    
+    model.apply(init_weights)
+
+    new_prec, new_recall, new_training_losses, model = run_model(
+        data_dict,
+        model,
+        n_batches= 1_000,
+        num_lambda_grad_asscent = num_lambda_grad_asscent
+    )
+    
+    if num_lambda_grad_asscent !=0:
+        lambdas = [ i.detach() for i in model.parameters()][-num_lambda_grad_asscent:]
+        prec_recalls.append([new_prec, new_recall, lambdas])
+    else:
+        prec_recalls.append([new_prec, new_recall])
+        
+    num_non_conv += int(np.array(new_training_losses)[-1] > 0.05*np.array(new_training_losses)[0])
+    plt.plot(new_training_losses)
+plt.show()
+
+optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
+# -
 
 
