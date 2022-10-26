@@ -24,6 +24,8 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+
 
 from sklearn.metrics import precision_score, recall_score, roc_curve
 from sklearn.linear_model import LogisticRegression
@@ -37,7 +39,8 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from constrained_metric_loss.min_precision_loss import (
-    MinPrecLoss, LearnableMinPrecLoss, MinPrecLeakyLoss
+    MinPrecLoss, MinPrec01LossApprox, ZeroOneApproximation
+
 )
 
 from constrained_metric_loss.linear_model import LinearModel, InitialParameterGenerator
@@ -140,7 +143,7 @@ def training_w_lambda_grad_ascent(model, data_dict, n_batches, num_lambda_grad_a
     list_of_model_params = list(model.parameters())
     
     model_params = list_of_model_params[:-num_lambda_grad_asscent]
-    optimizer = optim.Adam(model_params, lr=0.1)
+    optimizer = optim.Adam(model_params, lr=0.01)
 
     lam = list_of_model_params[-num_lambda_grad_asscent:]
     optimizer_lam = optim.Adam(lam, lr=0.01)
@@ -204,7 +207,9 @@ data_dict = all_data_dict["paper_data"]
 target_prec = 0.8
 
 
-def optimal_prec_recall_search(target_prec, prec_recall_list, tol=0.02, beta=1):
+def optimal_prec_recall_search(
+    target_prec, prec_recall_list, tol=0.02, beta=1
+):
     prec_recall_arr = np.array(prec_recall_list)
     diff_to_target = prec_recall_arr[:,0] - target_prec
     candidates = prec_recall_arr[diff_to_target>-tol]
@@ -236,9 +241,11 @@ optimal_prec_recall_search(target_prec, prec_recalls)[:15]
 param_seed = np.concatenate([sklearnlogreg.coef_.flatten(), sklearnlogreg.intercept_])
 
 initial_param_gen = InitialParameterGenerator(param_seed)
-initial_param_gen.generate_samples_from_grid(num_to_select=5, number_per_dim=10, seed_multiplier=10)
-initial_param_gen.generate_normally_distributed_around_seed(number=5, var=5)
-initial_param_gen.generate_normally_distributed(number=5, mean=0, var=5)
+initial_param_gen.generate_samples_from_grid(
+    num_to_select=50, number_per_dim=10, seed_multiplier=2
+)
+initial_param_gen.generate_normally_distributed_around_seed(number=10, var=5)
+initial_param_gen.generate_normally_distributed(number=10, mean=0, var=5)
 
 param_inits = initial_param_gen.initial_parameters
 # -
@@ -248,38 +255,38 @@ param_inits = initial_param_gen.initial_parameters
 # + tags=[]
 # %%time
 
-num_lambda_grad_asscent = 1
+num_lambda_grad_asscent = 0
 train_lambda_with_ascent = num_lambda_grad_asscent != 0
 
-num_non_conv = 0
-prec_recalls = []
+top_scores_hughes_linear = []
+for lam in [10., 100. ,1000.]:
+    prec_recalls = []
+    for param_i, param_init in enumerate(tqdm(param_inits)):
+        model = LinearModel(
+            nfeat=data_dict["X_train"].shape[1],
+            model_param_init=param_init,
+            loss=MinPrecLoss,
+            loss_arguments={
+                "min_prec": target_prec,
+                "lmbda":  nn.Parameter(torch.tensor([lam]), requires_grad=train_lambda_with_ascent),
+                "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
+            },
+        )
 
-for param_i, param_init in enumerate(param_inits):
-    
-    model = LinearModel(
-        nfeat=data_dict["X_train"].shape[1],
-        model_param_init=param_init,
-        loss=MinPrecLoss,
-        loss_arguments={
-            "min_prec": target_prec,
-            "lmbda":  nn.Parameter(torch.tensor([1e1]), requires_grad=train_lambda_with_ascent),
-            "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
-        },
-    )
+        maxrecall_prec, maxrecall_recall, training_losses, _ = run_model(
+            data_dict,
+            model,
+            n_batches= 1_000,
+            num_lambda_grad_asscent = num_lambda_grad_asscent
+        )
 
-    maxrecall_prec, maxrecall_recall, training_losses, _ = run_model(
-        data_dict,
-        model,
-        n_batches= 2_000,
-        num_lambda_grad_asscent = num_lambda_grad_asscent
-    )
-    
-    prec_recalls.append([maxrecall_prec, maxrecall_recall, int(param_i)])
-    num_non_conv += int(np.array(training_losses)[-1] > 0.05*np.array(training_losses)[0])
-    plt.plot(training_losses)
-plt.show()
-print(num_non_conv/ len(param_inits))  
-optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
+        prec_recalls.append([maxrecall_prec, maxrecall_recall]) # int(param_i)
+       
+    optimals = optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)
+    top_5 = optimals[:5]
+    top_scores_hughes_linear.append((top_5, len(optimals)))
+
+top_scores_hughes_linear
 # -
 
 
@@ -288,43 +295,59 @@ optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
 # +
 
 # %%time
-num_lambda_grad_asscent = 2
+num_lambda_grad_asscent = 0
 train_lambda_with_ascent = num_lambda_grad_asscent != 0
 
+top_scores_linear_test = []
+for lam in [10., 100. ,1_000.]:
+    
+    prec_recalls = []
 
-num_non_conv = 0
-prec_recalls = []
-leaky_grads = [0.01] #np.logspace(-1, -3, 20)
-for param_i, param_init in enumerate(param_inits):
-    for ls in leaky_grads:
+    for param_i, param_init in enumerate(tqdm(param_inits)):
+
+        # zero_one_loss_approximation = ZeroOneApproximation(
+        #     name_of_approx = "semi_rath_hughes_approx",
+        #     params_dict = {'gamma': 7.0, 'delta': 0.035, 'eps': 0.75}
+        # )
+        
+        # zero_one_loss_approximation = ZeroOneApproximation(
+        #     name_of_approx = "logsigmoid_approx",
+        #     params_dict = {}
+        # )
+        
+        zero_one_loss_approximation = ZeroOneApproximation(
+            name_of_approx = "leaky_relu_approx",
+            params_dict = {"negative_slope": 1.}
+        )
         
         model = LinearModel(
             nfeat=data_dict["X_train"].shape[1],
             model_param_init=param_init,
-            loss=MinPrecLeakyLoss,
+            loss=MinPrec01LossApprox,
             loss_arguments={
                 "min_prec": target_prec, 
-                "lmbda": nn.Parameter(torch.tensor([1e1]), requires_grad=train_lambda_with_ascent), 
-                'lmbda2': nn.Parameter(torch.tensor([1e3]), requires_grad=train_lambda_with_ascent), 
-                'leaky_slope': ls
+                "lmbda": nn.Parameter(torch.tensor([lam]), requires_grad=train_lambda_with_ascent), 
+                'lmbda2': nn.Parameter(torch.tensor([2*lam]),requires_grad=train_lambda_with_ascent), 
+                'zero_one_loss_approx': zero_one_loss_approximation,
             },
         )
-        
+
         new_prec, new_recall, new_training_losses, model = run_model(
             data_dict,
             model,
-            n_batches= 2_000,
+            n_batches= 1_000,
             num_lambda_grad_asscent = num_lambda_grad_asscent
         )
 
         lambdas = [ i.detach() for i in model.parameters()][1:]
-        prec_recalls.append([new_prec, new_recall, int(param_i), ls, lambdas])
-        num_non_conv += int(np.array(new_training_losses)[-1] > 0.05*np.array(new_training_losses)[0])
-        plt.plot(new_training_losses)
-plt.show()
-print(num_non_conv/ (len(param_inits)*len(leaky_grads)))  
+        prec_recalls.append([new_prec, new_recall])
+        
+    optimals = optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)
+    top_5 = optimals[:5]
+    top_scores_linear_test.append((top_5, len(optimals)))
     
-optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
+
+top_scores_linear_test
 
 
 # -
@@ -333,53 +356,33 @@ optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
 # +
 from constrained_metric_loss.mlp import MLP
 
-
-
 num_lambda_grad_asscent = 0
 train_lambda_with_ascent = num_lambda_grad_asscent != 0
 
-num_initialisations = 20
+num_initialisations = 100
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
         torch.nn.init.xavier_uniform_(m.weight)
-        torch.nn.init.uniform_(m.bias,-1, 1)
+        torch.nn.init.uniform_(m.bias,-4, 4)
 
+
+# -
+# #### BCE
+
+# +
 
 prec_recalls = []
 
-for _ in range(num_initialisations):
-        
-    # model = MLP(
-    #     nfeat=data_dict["X_train"].shape[1], 
-    #     hidden_width=4, 
-    #     loss=MinPrecLoss,
-    #     loss_arguments={
-    #         "min_prec": target_prec,
-    #         "lmbda":  nn.Parameter(torch.tensor([1e2]), requires_grad=train_lambda_with_ascent),
-    #         "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
-    #     },
-    # )
-    
-    # model = MLP(
-    #     nfeat=data_dict["X_train"].shape[1],
-    #     hidden_width=4, 
-    #     loss=MinPrecLeakyLoss,
-    #     loss_arguments={
-    #         "min_prec": target_prec, 
-    #         "lmbda": nn.Parameter(torch.tensor([1e2]), requires_grad=train_lambda_with_ascent), 
-    #         'lmbda2': nn.Parameter(torch.tensor([1e1]), requires_grad=train_lambda_with_ascent), 
-    #         'leaky_slope': 0.1
-    #     },
-    # )
-    
+for _ in tqdm(range(num_initialisations)):
+
     model = MLP(
         nfeat=data_dict["X_train"].shape[1],
         hidden_width=4, 
-        loss=nn.HingeEmbeddingLoss,
+        loss=nn.BCEWithLogitsLoss,
         loss_arguments={},
     )
-    
+
     model.apply(init_weights)
 
     new_prec, new_recall, new_training_losses, model = run_model(
@@ -388,18 +391,122 @@ for _ in range(num_initialisations):
         n_batches= 1_000,
         num_lambda_grad_asscent = num_lambda_grad_asscent
     )
-    
+
     if num_lambda_grad_asscent !=0:
         lambdas = [ i.detach() for i in model.parameters()][-num_lambda_grad_asscent:]
-        prec_recalls.append([new_prec, new_recall, lambdas])
+        prec_recalls.append([new_prec, new_recall]) # lambdas
     else:
         prec_recalls.append([new_prec, new_recall])
-        
-    num_non_conv += int(np.array(new_training_losses)[-1] > 0.05*np.array(new_training_losses)[0])
-    plt.plot(new_training_losses)
-plt.show()
 
-optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)[:15]
+optimals = optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)
+top_5 = optimals[:5]
+top_5, len(optimals)
+
 # -
 
 
+# #### hughes loss
+
+# +
+
+
+top_scores_hughes = []
+for lam in [10., 100. ,1000.]:
+    prec_recalls = []
+
+    for _ in tqdm(range(num_initialisations)):
+        
+        model = MLP(
+            nfeat=data_dict["X_train"].shape[1], 
+            hidden_width=4, 
+            loss=MinPrecLoss,
+            loss_arguments={
+                "min_prec": target_prec,
+                "lmbda":  nn.Parameter(torch.tensor([lam]), requires_grad=train_lambda_with_ascent),
+                "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
+            },
+        )
+
+        model.apply(init_weights)
+
+        new_prec, new_recall, new_training_losses, model = run_model(
+            data_dict,
+            model,
+            n_batches= 2_000,
+            num_lambda_grad_asscent = num_lambda_grad_asscent
+        )
+
+        if num_lambda_grad_asscent !=0:
+            lambdas = [ i.detach() for i in model.parameters()][-num_lambda_grad_asscent:]
+            prec_recalls.append([new_prec, new_recall]) # lambdas
+        else:
+            prec_recalls.append([new_prec, new_recall])
+
+    optimals = optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)
+    top_5 = optimals[:5]
+    top_scores_hughes.append((top_5, len(optimals)))
+
+top_scores_hughes
+# -
+
+# #### test loss
+
+# +
+
+
+top_scores_test = []
+for lam in [10., 100. ,1000.]:
+    prec_recalls = []
+
+    for _ in tqdm(range(num_initialisations)):
+        
+        # zero_one_loss_approximation = ZeroOneApproximation(
+        #     name_of_approx = "semi_rath_hughes_approx",
+        #     params_dict = {'gamma': 7.0, 'delta': 0.035, 'eps': 0.75}
+        # )
+        
+        # zero_one_loss_approximation = ZeroOneApproximation(
+        #     name_of_approx = "logsigmoid_approx",
+        #     params_dict = {}
+        # )
+        
+        zero_one_loss_approximation = ZeroOneApproximation(
+            name_of_approx = "leaky_relu_approx",
+            params_dict = {"negative_slope": 1.}
+        )
+
+
+        model = MLP(
+            nfeat=data_dict["X_train"].shape[1],
+            hidden_width=4, 
+            loss=MinPrec01LossApprox,
+            loss_arguments={
+                "min_prec": target_prec, 
+                "lmbda": nn.Parameter(torch.tensor([lam]), requires_grad=train_lambda_with_ascent), 
+                'lmbda2': nn.Parameter(torch.tensor([2*lam]), requires_grad=train_lambda_with_ascent), 
+                'zero_one_loss_approx': zero_one_loss_approximation,
+            },
+        )
+
+        model.apply(init_weights)
+
+        new_prec, new_recall, new_training_losses, model = run_model(
+            data_dict,
+            model,
+            n_batches= 2_000,
+            num_lambda_grad_asscent = num_lambda_grad_asscent
+        )
+
+        if num_lambda_grad_asscent !=0:
+            lambdas = [ i.detach() for i in model.parameters()][-num_lambda_grad_asscent:]
+            prec_recalls.append([new_prec, new_recall]) # lambdas
+        else:
+            prec_recalls.append([new_prec, new_recall])
+
+    optimals = optimal_prec_recall_search(target_prec, prec_recalls, tol=0.02)
+    top_5 = optimals[:5]
+    top_scores_test.append((top_5, len(optimals)))
+
+top_scores_test
+# -
+#

@@ -41,7 +41,7 @@ init_notebook_mode()
 # -
 
 from constrained_metric_loss.min_precision_loss import (
-    MinPrecLoss, MinPrecLossLogForm, MinPrecLeakyLoss
+    MinPrecLoss, MinPrec01LossApprox, ZeroOneApproximation
 )
 from constrained_metric_loss.bce_type_loss import BCELogitManual
 
@@ -210,11 +210,13 @@ def leaky_loss(beta, min_prec=0.9, lmbda=100, lmbda2=1000, leaky_slope=0.01):
 
 # # Plotting
 
-def get_loss_landscape(loss_function, num_samples, w0_width, w1_width, kwargs={}):
+def get_loss_landscape(
+    loss_function, num_samples, x_lims, y_lims, kwargs={}
+):
     N = num_samples
     xv, yv = np.meshgrid(
-        sklearnbetas[0] + np.linspace(-w0_width, w0_width, N), 
-        sklearnbetas[1] + np.linspace(-w1_width, w1_width, N)
+        sklearnbetas[0] + np.linspace(x_lims[0], x_lims[1], N), 
+        sklearnbetas[1] + np.linspace(y_lims[0], y_lims[1], N)
     )
     input_params = np.column_stack([xv.ravel(), yv.ravel(), sklearnbetas[2]*np.ones(N*N)])
     # input_params = np.column_stack([xv.ravel(), yv.ravel(), sklearnbetas[2]*np.random.normal(1, 0.1, N*N)])
@@ -230,18 +232,106 @@ def get_loss_landscape(loss_function, num_samples, w0_width, w1_width, kwargs={}
         # autosize=False,
         width=800,
         height=800,
+
     )
     return go.Figure(data=data, layout=layout)
 
 
-iplot(get_loss_landscape(loss_from_script, 80, 3, 2, {'min_prec': 0.9, 'lmbda': 1e4}))
-
-iplot(
-    get_loss_landscape(
-        leaky_loss, 80, 3, 2, 
-        {'min_prec': 0.9, 'lmbda': 1e4, 'lmbda2': 1e6, 'leaky_slope':0.001}
-    )
+# +
+fig = get_loss_landscape(
+    loss_from_script, 
+    num_samples = 120, 
+    x_lims = (-1, 3.5), #(1,2.1), 
+    y_lims = (-2, 2), #(-1,1), 
+    kwargs = {'min_prec': 0.8, 'lmbda': 1e2},
 )
+fig.update_layout(scene = dict(zaxis = dict(range=[2_000, 20_000])))
+
+iplot(fig)
+# -
+
+fig = get_loss_landscape(
+    leaky_loss, 
+    120,
+    x_lims = (-1.5, 3.5), #(1,2.1), 
+    y_lims = (-2, 1.5), #(-1,1), 
+    kwargs = {
+        'min_prec': 0.8, 'lmbda': 1e2, 'lmbda2': 2e2, 'leaky_slope':0.001
+    }
+)
+fig.update_layout(scene = dict(zaxis = dict(range=[15_000, 35_000])))
+iplot(fig)
+
+
+
+
+
+# # overlay losses
+
+def get_loss_landscape_overlayed(
+    loss_function1, 
+    loss_function1_args, 
+    loss_function2, 
+    loss_function2_args, 
+    num_samples, 
+    x_lims, 
+    y_lims,
+    plot_surface_diff = False
+):
+    N = num_samples
+    xv, yv = np.meshgrid(
+        sklearnbetas[0] + np.linspace(x_lims[0], x_lims[1], N), 
+        sklearnbetas[1] + np.linspace(y_lims[0], y_lims[1], N)
+    )
+    input_params = np.column_stack(
+        [xv.ravel(), yv.ravel(), sklearnbetas[2]*np.ones(N*N)]
+    )
+    
+    losses1 = np.apply_along_axis(
+        loss_function1, 1, input_params, **loss_function1_args
+    )
+    
+    
+    losses2 = np.apply_along_axis(
+        loss_function2, 1, input_params, **loss_function2_args
+    )
+    
+    
+    if plot_surface_diff:
+        loss_diff = losses1 - losses2
+        surface_diff = go.Surface(z=loss_diff.reshape(xv.shape), x=xv, y=yv)
+        data = [surface_diff]
+    else:
+        surface1 = go.Surface(z=losses1.reshape(xv.shape), x=xv, y=yv)
+        surface2 = go.Surface(z=losses2.reshape(xv.shape), x=xv, y=yv)
+        data = [
+            surface1,
+            surface2,
+        ]
+
+    layout = go.Layout(
+        # autosize=False,
+        width=800,
+        height=800,
+    )
+    return go.Figure(data=data, layout=layout)
+
+# +
+fig = get_loss_landscape_overlayed(
+    loss_function1 = loss_from_script, 
+    loss_function1_args =  {'min_prec': 0.8, 'lmbda': 1e4}, 
+    loss_function2 = leaky_loss, 
+    loss_function2_args = {'min_prec': 0.8, 'lmbda': 1e4, 'lmbda2': 0.0, 'leaky_slope':0.001}, 
+    num_samples = 80,
+    x_lims = (-1, 2.5), #(1,2.1), , 
+    y_lims = (-1.5, 1.5), #(-1,1), ,
+    plot_surface_diff = False
+)
+
+iplot(fig)
+# -
+
+
 
 # # BCE tests
 
@@ -291,6 +381,58 @@ torch_leaky_relu_leaky_relu = nn.LeakyReLU(negative_slope=-0.01)(1 - nn.LeakyReL
 loglogsigmoid = -torch.log(torch.sigmoid(torch_x))
 
 plt.plot(torch_x.numpy(), loglogsigmoid.numpy())
+# -
+
+
+
+
+
+# +
+
+
+
+def zero_one_loss(xx, y):
+    return 1 - torch.heaviside((2 * y - 1) * xx, torch.tensor([0.5])).numpy()
+
+semi_rath_hughes_loss = ZeroOneApproximation(
+    name_of_approx = "semi_rath_hughes_approx",
+    params_dict = {'gamma': 7.0, 'delta': 0.035, 'eps': 0.75}
+)
+
+logsigmoid_loss = ZeroOneApproximation(
+    name_of_approx = "logsigmoid_approx",
+    params_dict = {}
+)
+
+leaky_relu_loss = ZeroOneApproximation(
+    name_of_approx = "leaky_relu_approx",
+    params_dict = {"negative_slope": 0.01}
+)
+
+hinge_loss = ZeroOneApproximation(
+    name_of_approx = "leaky_relu_approx",
+    params_dict = {"negative_slope": 1.}
+)
+
+
+xx = torch.linspace(-2.5, 2.5, 1000)
+
+plt.plot(
+    xx, zero_one_loss(xx, 1), label='zero_one_loss'
+)
+plt.plot(
+    xx, semi_rath_hughes_loss.calc_loss(xx, 1), label='semi_rath_hughes'
+)
+plt.plot(
+    xx, logsigmoid_loss.calc_loss(xx, 1), label='logsigmoid_loss'
+)
+plt.plot(
+    xx, leaky_relu_loss.calc_loss(xx, 1), label='leaky_relu_loss'
+)
+plt.plot(
+    xx, hinge_loss.calc_loss(xx, 1), label='hinge_loss'
+)
+plt.legend()
 # -
 
 
