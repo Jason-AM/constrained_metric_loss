@@ -310,15 +310,15 @@ for lam in [10., 100. ,1_000.]:
         #     params_dict = {'gamma': 7.0, 'delta': 0.035, 'eps': 0.75}
         # )
         
-        # zero_one_loss_approximation = ZeroOneApproximation(
-        #     name_of_approx = "logsigmoid_approx",
-        #     params_dict = {}
-        # )
-        
         zero_one_loss_approximation = ZeroOneApproximation(
-            name_of_approx = "leaky_relu_approx",
-            params_dict = {"negative_slope": 1.}
+            name_of_approx = "logsigmoid_approx",
+            params_dict = {}
         )
+        
+#         zero_one_loss_approximation = ZeroOneApproximation(
+#             name_of_approx = "leaky_relu_approx",
+#             params_dict = {"negative_slope": 1.}
+#         )
         
         model = LinearModel(
             nfeat=data_dict["X_train"].shape[1],
@@ -465,15 +465,15 @@ for lam in [10., 100. ,1000.]:
         #     params_dict = {'gamma': 7.0, 'delta': 0.035, 'eps': 0.75}
         # )
         
-        # zero_one_loss_approximation = ZeroOneApproximation(
-        #     name_of_approx = "logsigmoid_approx",
-        #     params_dict = {}
-        # )
-        
         zero_one_loss_approximation = ZeroOneApproximation(
-            name_of_approx = "leaky_relu_approx",
-            params_dict = {"negative_slope": 1.}
+            name_of_approx = "logsigmoid_approx",
+            params_dict = {}
         )
+        
+        # zero_one_loss_approximation = ZeroOneApproximation(
+        #     name_of_approx = "leaky_relu_approx",
+        #     params_dict = {"negative_slope": 1.}
+        # )
 
 
         model = MLP(
@@ -509,4 +509,6 @@ for lam in [10., 100. ,1000.]:
 
 top_scores_test
 # -
-#
+
+
+
