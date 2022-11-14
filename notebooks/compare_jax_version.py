@@ -26,7 +26,6 @@ from timeit import timeit
 import numpy as np
 
 import constrained_metric_loss.min_precision_loss as torch_min_prec
-import constrained_metric_loss.jax_linear_model as jax_min_prec
 # -
 
 # # basic tests
@@ -39,7 +38,8 @@ from sklearn.model_selection import train_test_split
 # +
 from data import toydata
 
-x, y, _, _, _, _ = toydata.create_toy_dataset()
+# x, y, _, _, _, _ = toydata.create_toy_dataset()
+x, y, _, _, _, _ = toydata.create_toy_dataset_large()
 
 X_train, X_test, y_train, y_test = train_test_split(
     x, y, test_size=0.33, random_state=42, stratify=y
@@ -77,40 +77,115 @@ value, opt_state = fit_model(
     0.8, 
     1000, 
     2000,
-    n_batches=10_000
+    n_epochs=1_000
+)
+value, opt_state
+
+# +
+# %%time
+
+from constrained_metric_loss.jax_linear_model_funct2 import (
+    fit_model2, 
+    create_eban_loss, 
+    logsigmoid_approx, 
+    leaky_relu_approx, 
+    semi_rath_hughes_approx, 
+    create_rath_hughes_loss,
+    apply_model
 )
 
+# loss = create_eban_loss(0.8, 1000, 2000, semi_rath_hughes_approx(gamma=7, delta=0.035, eps=0.75))
+# loss = create_eban_loss(0.8, 1000, 2000, logsigmoid_approx())
+
+loss = create_rath_hughes_loss(0.8, 1000, gamma=7, delta=0.035, eps=0.75)
+
+loss, params2 = fit_model2(
+    loss,
+    param_init,
+    x,
+    data_dict["y_train"],
+    n_epochs=1_000
+)
+# +
+from sklearn.metrics import precision_score, recall_score
+
+w_last, b_last = params2[-1]
+phat = jnn.sigmoid(jnp.dot(data_dict['X_test'], w_last.T) + b_last)
+
+yhat = (phat >= 0.5).astype(int)
+
+
+prec = precision_score(data_dict['y_test'], yhat, zero_division=0)
+rec = recall_score(data_dict['y_test'], yhat, zero_division=0)
+
+prec, rec
+
+# +
+
+from constrained_metric_loss.jax_linear_model_funct2 import  fit_model3
+
+loss, params = fit_model3(
+    param_init,
+    x,
+    data_dict["y_train"],
+    0.8, 1000, gamma=7, delta=0.035, eps=0.75,
+    n_epochs=5_000
+)
+
+# +
+from sklearn.metrics import precision_score, recall_score
+
+w_last, b_last = params[-1]
+phat = jnn.sigmoid(jnp.dot(data_dict['X_test'], w_last.T) + b_last)
+
+yhat = (phat >= 0.5).astype(int)
+
+
+prec = precision_score(data_dict['y_test'], yhat, zero_division=0)
+rec = recall_score(data_dict['y_test'], yhat, zero_division=0)
+
+prec, rec
 # -
 
-value, opt_state[0]
 
 
 # +
 # %%time
 
 from constrained_metric_loss.min_precision_loss import (
-    MinPrec01LossApprox, ZeroOneApproximation
+    MinPrec01LossApprox, ZeroOneApproximation, MinPrecLoss
 
 )
 from constrained_metric_loss.linear_model import LinearModel
 import torch.optim as optim
 
 
-zero_one_loss_approximation = ZeroOneApproximation(
-    name_of_approx = "logsigmoid_approx",
-    params_dict = {}
-)
+# zero_one_loss_approximation = ZeroOneApproximation(
+#     name_of_approx = "logsigmoid_approx",
+#     params_dict = {}
+# )
 
+
+# model = LinearModel(
+#     nfeat=data_dict["X_train"].shape[1],
+#     model_param_init=np.concatenate(param_init[0]),
+#     loss=MinPrec01LossApprox,
+#     loss_arguments={
+#         "min_prec": 0.8, 
+#         "lmbda": 1000., 
+#         'lmbda2': 2000., 
+#         'zero_one_loss_approx': zero_one_loss_approximation,
+#     },
+# )
 
 model = LinearModel(
     nfeat=data_dict["X_train"].shape[1],
     model_param_init=np.concatenate(param_init[0]),
-    loss=MinPrec01LossApprox,
+    loss=MinPrecLoss,
     loss_arguments={
         "min_prec": 0.8, 
         "lmbda": 1000., 
-        'lmbda2': 2000., 
-        'zero_one_loss_approx': zero_one_loss_approximation,
+        "sigmoid_hyperparams": {"gamma": 7, "delta": 0.035, "eps": 0.75},
     },
 )
 
@@ -120,7 +195,7 @@ training_losses = model.fit(
     data_dict["X_train"], 
     data_dict["y_train"].reshape(-1,1),
     optimizer, 
-    n_batches=10_000
+    n_batches=35_000
 )
 
 
@@ -148,7 +223,7 @@ params = fit_model_optax(
     0.8, 
     1000., 
     2000.,
-    n_batches=10_000
+    n_epochs=10_000
 )
 # -
 
@@ -250,7 +325,7 @@ training_losses = model.fit(
     data_dict["X_train"], 
     data_dict["y_train"].reshape(-1,1),
     optimizer, 
-    n_batches=2
+    n_batches=1_000
 )
 # -
 
@@ -266,26 +341,26 @@ loss_value, params = fit_model(
     0.8, 
     1000., 
     2000.,
-    n_batches=2
+    n_epochs=1_000
 )
 
 # +
-# %%time
-from constrained_metric_loss.jax_linear_model_funct import fit_model_optax
-import optax
+# # %%time
+# from constrained_metric_loss.jax_linear_model_funct import fit_model_optax
+# import optax
 
-x = data_dict["X_train"]
-optimizer = optax.adam(learning_rate=0.01)
-loss_value, params = fit_model_optax(
-    torch_jax_init_params, 
-    optimizer, 
-    x, 
-    data_dict["y_train"],
-    0.8, 
-    1000., 
-    2000.,
-    n_batches=2
-)
+# x = data_dict["X_train"]
+# optimizer = optax.adam(learning_rate=0.01)
+# loss_value, params = fit_model_optax(
+#     torch_jax_init_params, 
+#     optimizer, 
+#     x, 
+#     data_dict["y_train"],
+#     0.8, 
+#     1000., 
+#     2000.,
+#     n_epochs=2
+# )
 
 # -
 

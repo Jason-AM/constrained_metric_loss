@@ -1,8 +1,9 @@
 import jax.numpy as jnp
 import jax.nn as jnn
 from jax import jit
-from jax import lax
-from functools import partial
+
+# from jax import lax
+# from functools import partial
 
 import optax
 
@@ -28,6 +29,7 @@ def apply_model(x, params):
     return jnp.dot(x, w_last.T) + b_last
 
 
+@jit
 def model_loss(beta, x, y, min_prec, lmbda, lmbda2):
     f = apply_model(x, beta)
 
@@ -53,18 +55,20 @@ def step(step, opt_state, x, y, min_prec, lmbda, lmbda2):
     return value, opt_state
 
 
-def fit_model(beta_init, x, y, min_prec, lmbda, lmbda2, n_batches=1000):
-
+def fit_model(beta_init, x, y, min_prec, lmbda, lmbda2, n_epochs=1000, batch_size=8):
     opt_state = opt_init(beta_init)
-
-    for i in range(n_batches):
-        value, opt_state = step(i, opt_state, x, y, min_prec, lmbda, lmbda2)
+    n_batches = len(y) // batch_size + 1
+    for i in range(n_epochs):
+        for j in range(n_batches - 1):
+            x_batch = x[j * batch_size : (j + 1) * batch_size]
+            y_batch = y[j * batch_size : (j + 1) * batch_size]
+            value, opt_state = step(i * n_batches + j, opt_state, x_batch, y_batch, min_prec, lmbda, lmbda2)
 
     return value, get_params(opt_state)
 
 
 def fit_model_optax(
-    params: optax.Params, optimizer: optax.GradientTransformation, x, y, min_prec, lmbda, lmbda2, n_batches=1000
+    params: optax.Params, optimizer: optax.GradientTransformation, x, y, min_prec, lmbda, lmbda2, n_epochs=1000
 ) -> optax.Params:
     opt_state = optimizer.init(params)
 
@@ -75,7 +79,7 @@ def fit_model_optax(
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss_value
 
-    for i in range(n_batches):
+    for i in range(n_epochs):
         params, opt_state, loss_value = step(params, opt_state, x, y, min_prec, lmbda, lmbda2)
 
     return loss_value, params
