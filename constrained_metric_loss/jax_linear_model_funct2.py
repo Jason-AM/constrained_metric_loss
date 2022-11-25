@@ -28,7 +28,7 @@ def apply_model(x, params):
             x = jax.nn.relu(jnp.dot(x, weights.T) + biases)
 
     w_last, b_last = params[-1]
-    return jnp.dot(x, w_last.T) + b_last
+    return jnp.dot(x, w_last.T).flatten() + b_last
 
 
 def eban_model_loss(beta, x, y, min_prec, lmbda, lmbda2, approx_func):
@@ -64,7 +64,9 @@ def rath_hughes_loss(beta, x, y, min_prec, lmbda, gamma, delta, eps):
 
     loss = -tpc + lmbda * jnn.relu(g)
 
-    return loss
+    # norm_term = jnp.sum(beta[0][0] ** 2) + jnp.sum(beta[0][1] ** 2)
+
+    return loss  # + lmbda * norm_term
 
 
 def create_rath_hughes_loss(min_prec, lmbda, gamma, delta, eps):
@@ -81,7 +83,10 @@ def step(loss, step, opt_state, x, y):
     return value, opt_state
 
 
-def fit_model2(loss, beta_init, x, y, n_epochs=1000, batch_size=1024):
+def fit_model2(loss, beta_init, x, y, n_epochs=1000, batch_size=1e10):
+
+    batch_size = batch_size if batch_size < len(y) else len(y)
+
     opt_state = opt_init(beta_init)
     n_batches = len(y) // batch_size + 1
     for i in range(n_epochs):
@@ -93,56 +98,56 @@ def fit_model2(loss, beta_init, x, y, n_epochs=1000, batch_size=1024):
     return value, get_params(opt_state)
 
 
-def rath_hughes_loss3(beta, x, y, min_prec, lmbda, gamma, delta, mhat, bhat, mtilde, btilde):
-    f = apply_model(x, beta)
+# def rath_hughes_loss3(beta, x, y, min_prec, lmbda, gamma, delta, mhat, bhat, mtilde, btilde):
+#     f = apply_model(x, beta)
 
-    tpc = jnp.dot(y.flatten(), (1 + gamma * delta) * jnn.sigmoid(mtilde * f + btilde))
-    fpc = jnp.dot(1 - y.flatten(), (1 + gamma * delta) * jnn.sigmoid(mhat * f + bhat))
+#     tpc = jnp.dot(y.flatten(), (1 + gamma * delta) * jnn.sigmoid(mtilde * f + btilde))
+#     fpc = jnp.dot(1 - y.flatten(), (1 + gamma * delta) * jnn.sigmoid(mhat * f + bhat))
 
-    Nplus = jnp.sum(y)
+#     Nplus = jnp.sum(y)
 
-    g = -tpc + (min_prec / (1.0 - min_prec)) * fpc + gamma * delta * Nplus
+#     g = -tpc + (min_prec / (1.0 - min_prec)) * fpc + gamma * delta * Nplus
 
-    loss = -tpc + lmbda * jnn.relu(g)
+#     loss = -tpc + lmbda * jnn.relu(g)
 
-    return loss
-
-
-@jit
-def step3(step, opt_state, x, y, min_prec, lmbda, gamma, delta, mhat, bhat, mtilde, btilde):
-    value, grads = jax.value_and_grad(rath_hughes_loss3, argnums=0)(
-        get_params(opt_state), x, y, min_prec, lmbda, gamma, delta, mhat, bhat, mtilde, btilde
-    )
-    opt_state = opt_update(step, grads, opt_state)
-    return value, opt_state
+#     return loss
 
 
-def fit_model3(beta_init, x, y, min_prec, lmbda, gamma, delta, eps, n_epochs=1000, batch_size=1024):
-    opt_state = opt_init(beta_init)
-    n_batches = len(y) // batch_size + 1
-    mhat, bhat = get_sigmoid_params_bfgs(gamma, delta, eps, "upper")
-    mtilde, btilde = get_sigmoid_params_bfgs(gamma, delta, eps, "lower")
-    key = jax.random.PRNGKey(42)
-    for i in range(n_epochs):
-        if i % 100 == 0:
-            x = jax.random.permutation(key, x, axis=0, independent=False)
-            y = jax.random.permutation(key, y, axis=0, independent=False)
-        for j in range(n_batches - 1):  # range(1):  #
-            x_batch = x[j * batch_size : (j + 1) * batch_size]
-            y_batch = y[j * batch_size : (j + 1) * batch_size]
-            value, opt_state = step3(
-                i * n_batches + j,
-                opt_state,
-                x_batch,
-                y_batch,
-                min_prec,
-                lmbda,
-                gamma,
-                delta,
-                mhat,
-                bhat,
-                mtilde,
-                btilde,
-            )
+# @jit
+# def step3(step, opt_state, x, y, min_prec, lmbda, gamma, delta, mhat, bhat, mtilde, btilde):
+#     value, grads = jax.value_and_grad(rath_hughes_loss3, argnums=0)(
+#         get_params(opt_state), x, y, min_prec, lmbda, gamma, delta, mhat, bhat, mtilde, btilde
+#     )
+#     opt_state = opt_update(step, grads, opt_state)
+#     return value, opt_state
 
-    return value, get_params(opt_state)
+
+# def fit_model3(beta_init, x, y, min_prec, lmbda, gamma, delta, eps, n_epochs=1000, batch_size=1024):
+#     opt_state = opt_init(beta_init)
+#     n_batches = len(y) // batch_size + 1
+#     mhat, bhat = get_sigmoid_params_bfgs(gamma, delta, eps, "upper")
+#     mtilde, btilde = get_sigmoid_params_bfgs(gamma, delta, eps, "lower")
+#     key = jax.random.PRNGKey(42)
+#     for i in range(n_epochs):
+#         if i % 100 == 0:
+#             x = jax.random.permutation(key, x, axis=0, independent=False)
+#             y = jax.random.permutation(key, y, axis=0, independent=False)
+#         for j in range(n_batches - 1):  # range(1):  #
+#             x_batch = x[j * batch_size : (j + 1) * batch_size]
+#             y_batch = y[j * batch_size : (j + 1) * batch_size]
+#             value, opt_state = step3(
+#                 i * n_batches + j,
+#                 opt_state,
+#                 x_batch,
+#                 y_batch,
+#                 min_prec,
+#                 lmbda,
+#                 gamma,
+#                 delta,
+#                 mhat,
+#                 bhat,
+#                 mtilde,
+#                 btilde,
+#             )
+
+#     return value, get_params(opt_state)

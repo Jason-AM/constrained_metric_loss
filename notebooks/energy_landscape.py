@@ -53,6 +53,7 @@ from constrained_metric_loss.bce_type_loss import BCELogitManual
 from data import toydata
 
 x_toy, y_toy, _, _, _, _ = toydata.create_toy_dataset()
+# x_toy, y_toy, _, _, _, _ = toydata.create_toy_dataset_large()
 
 x = torch.from_numpy(x_toy).float()
 y = torch.from_numpy(y_toy).float()
@@ -245,7 +246,7 @@ fig = get_loss_landscape(
     y_lims = (-2, 2), #(-1,1), 
     kwargs = {'min_prec': 0.8, 'lmbda': 1e2},
 )
-fig.update_layout(scene = dict(zaxis = dict(range=[2_000, 20_000])))
+# fig.update_layout(scene = dict(zaxis = dict(range=[2_000, 20_000])))
 
 iplot(fig)
 # -
